@@ -68,7 +68,9 @@ export function createMakeClient(settings, fetchImpl = globalThis.fetch) {
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch { /* ne-JSON odpověď */ }
     if (!res.ok) {
-      const detail = (json && (json.message || json.detail || json.error)) || text || `HTTP ${res.status}`;
+      let detail = (json && (json.message || json.detail || json.error)) || text || `HTTP ${res.status}`;
+      if (res.status === 403) detail += " – Make API token v Netlify (MAKE_API_TOKEN) nemá potřebné oprávnění (scope); pro zapnutí scénáře je nutné scenarios:write, pro spuštění scenarios:run, pro nedoběhlé běhy dlqs:write.";
+      if (res.status === 401) detail += " – Make API token v Netlify (MAKE_API_TOKEN) je neplatný nebo pro jinou zónu.";
       const err = new Error(`Make API ${method} ${path}: ${detail}`);
       err.status = res.status;
       throw err;

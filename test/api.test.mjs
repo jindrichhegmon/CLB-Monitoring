@@ -299,3 +299,10 @@ test("HTTP: activate zapne a vypne scénář přes /start a /stop", async () => 
   res = await post({});
   assert.equal(res.status, 400);
 });
+
+test("HTTP: 403 z Make doplní nápovědu o oprávnění tokenu", async () => {
+  const { fetchImpl } = fakeFetch({ ...routes, "POST /api/v2/scenarios/7734406/start": () => new Response(JSON.stringify({ message: "Access denied" }), { status: 403 }) });
+  const res = await handle(new Request("https://x.netlify.app/api/activate", { method: "POST", body: JSON.stringify({ scenarioId: 7734406, active: true }) }), { settings, client: createMakeClient(settings, fetchImpl) });
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /scenarios:write/);
+});
