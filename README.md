@@ -18,6 +18,7 @@ Seznam je v `netlify/functions/scenarios.mjs` (pořadí = pořadí řádků v ta
 | 6231864 | 2. PM103 JOTFORM |
 | 7734429 | B1. Načtení ADRES po importu z Excelu a úprava adres – AKTUÁLNÍ SCÉNÁŘ (diakritika atd.) |
 | 7734406 | A. MEDISTAR – Načtení dat po importu z Excelu do PacientiVykony a spuštění statistik |
+| 4825799 | MEDISTAR-STATISTIKY – kompletní tabulky do Modré hlavy (on-demand, tlačítko „Spustit scénář“) |
 
 Přidání dalšího scénáře: doplnit řádek `{ id: <ID>, name: "<název>" }` (ID je v Make v adrese scénáře).
 Seznam jde přepsat i bez zásahu do kódu proměnnou prostředí `MAKE_SCENARIOS`
@@ -32,7 +33,7 @@ Seznam jde přepsat i bez zásahu do kódu proměnnou prostředí `MAKE_SCENARIO
 | Poslední běh | OK / varování / chyba, čas, odkaz na detail běhu v Make |
 | Běhy za N dny | počet běhů v období, z toho OK a s chybou (N = `DAYS_BACK`, výchozí 3) |
 | Nedoběhlé | počet neúplných běhů (DLQ) a tlačítko **Spustit nedoběhlé** – dokončí je od modulu, kde spadly |
-| Historie v Make | odkazy na historii běhů a na scénář; **▸ detail** rozbalí seznam nedoběhlých a chybových běhů s tlačítky |
+| Historie | odkazy do Make a **▸ historie**, která rozbalí přímo v aplikaci nedoběhlé běhy a posledních 20 běhů (stav, trvání, operace, chyba). U každého běhu: **co se stalo** (detail běhu z Make bez přihlášení), **Spustit znovu**, odkaz do Make. Tlačítko „Načíst starší běhy“ dotáhne až 100 běhů. |
 | Spuštění | **Spustit scénář** (on-demand scénář) nebo **Spustit znovu poslední běh** (scénář s webhookem – přehrání se stejnými vstupními daty) |
 
 ## Struktura
@@ -49,7 +50,9 @@ netlify.toml                     nastavení Netlify (publish = public, functions
 
 | Metoda a cesta | Tělo | Popis |
 |---|---|---|
-| `GET /api/overview` | – | data pro tabulku |
+| `GET /api/overview` | – | data pro tabulku včetně posledních 20 běhů každého scénáře |
+| `GET /api/history?scenarioId=123&limit=100` | – | historie běhů scénáře (`GET /scenarios/{id}/logs`) |
+| `GET /api/execution?scenarioId=123&executionId=…` | – | detail jednoho běhu (`GET /scenarios/{id}/executions/{executionId}`) |
 | `POST /api/rerun` | `{"scenarioId": 123}` | on-demand scénář spustí (`POST /scenarios/{id}/run`), jinak přehraje poslední přehratelný běh (`POST /scenarios/{id}/replay`) |
 | `POST /api/replay` | `{"scenarioId": 123, "executionId": "…"}` | přehrát konkrétní běh z historie |
 | `POST /api/retry` | `{"dlqId": "…"}` | spustit jeden nedoběhlý běh (`POST /dlqs/{id}/retry`) |

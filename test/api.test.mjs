@@ -61,6 +61,7 @@ const routes = {
   "GET /api/v2/scenarios/5535556": { scenario: { id: 5535556, name: "PM103 statistiky", isActive: true, scheduling: { type: "on-demand" } } },
   "GET /api/v2/scenarios/5535556/logs": { scenarioLogs: [] },
   "POST /api/v2/scenarios/5535556/run": { executionId: "run-1" },
+  "GET /api/v2/scenarios/7734429/executions/90dde4e0f70f4398b34e18a97b3b89bc": { status: "ERROR", error: { name: "InconsistencyError", message: "Transaction has been aborted." } },
 };
 
 test("getSettings používá výchozí seznam scénářů a umí ho přepsat z prostředí", () => {
@@ -221,3 +222,33 @@ test("HTTP: bez tokenu vrací srozumitelnou chybu", async () => {
   assert.match(body.scenarios[0].health.text, /MAKE_API_TOKEN/);
 });
 
+
+test("overview obsahuje historii běhů; /api/history a /api/execution vrací data", async () => {
+  const { fetchImpl, calls } = fakeFetch(routes);
+  const client = createMakeClient(settings, fetchImpl);
+  const opts = { settings, client };
+
+  const data = await buildOverview(client, settings, NOW);
+  const b1 = data.scenarios[0];
+  assert.equal(b1.history.length, 3, "historie obsahuje všechny běhy (i OK), ne události start/modify");
+  assert.equal(b1.history[0].status, 1);
+  assert.equal(b1.historyTotal, 3);
+
+  let res = await handle(new Request("https://x.netlify.app/api/history?scenarioId=7734429&limit=50"), opts);
+  assert.equal(res.status, 200);
+  const h = await res.json();
+  assert.equal(h.executions.length, 3);
+  assert.equal(calls.at(-1).query["pg[limit]"], "50");
+
+  res = await handle(new Request("https://x.netlify.app/api/history"), opts);
+  assert.equal(res.status, 400);
+
+  res = await handle(new Request("https://x.netlify.app/api/execution?scenarioId=7734429&executionId=90dde4e0f70f4398b34e18a97b3b89bc"), opts);
+  assert.equal(res.status, 200);
+  const d = await res.json();
+  assert.equal(d.detail.status, "ERROR");
+  assert.equal(calls.at(-1).path, "/api/v2/scenarios/7734429/executions/90dde4e0f70f4398b34e18a97b3b89bc");
+
+  res = await handle(new Request("https://x.netlify.app/api/execution?scenarioId=7734429&executionId=../x"), opts);
+  assert.equal(res.status, 400);
+});

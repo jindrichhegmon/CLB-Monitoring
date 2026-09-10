@@ -55,6 +55,10 @@
   tr.detail h4{margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
   table.inner{min-width:0;font-size:13px}
   table.inner th,table.inner td{padding:6px 10px}
+  .exdetail{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:6px 0 10px;font-size:12.5px}
+  .exdetail pre{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px;max-height:320px;overflow:auto;background:#f7f9fb;padding:8px;border-radius:6px}
+  .row-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .btn-sm{padding:4px 9px;font-size:12px}
   .empty{padding:14px 16px;color:var(--muted);font-size:13.5px}
   .notice{padding:10px 14px;border-radius:8px;margin:0 0 14px;font-size:13.5px;display:none}
   .notice.ok{display:block;background:var(--green-bg);color:var(--green)}
@@ -85,7 +89,8 @@
     <b>Aktivní</b> = scénář je v Make zapnutý. <b>Poslední běh</b> = výsledek posledního spuštění v Make (OK / varování / chyba).
     <b>Nedoběhlé</b> = běhy, které Make uložil jako neúplné; „Spustit nedoběhlé“ je dokončí od modulu, kde spadly (nic se nezapíše dvakrát).
     <b>Spustit znovu</b> = on-demand scénář se spustí, scénář s webhookem se přehraje se stejnými vstupními daty jako poslední běh (celý od začátku).
-    Chybové běhy za poslední <span id="daysBack">3</span> dny jsou v detailu řádku (▸ detail), každý jde spustit znovu z historie.
+    <b>▸ historie</b> rozbalí posledních 20 běhů přímo tady (bez přihlášení do Make) – u každého lze zobrazit, co se v běhu stalo („co se stalo“), a spustit ho znovu.
+    Sloupec „Běhy za <span id="daysBack">3</span> dny“ počítá běhy v tomto období.
   </footer>
 </div>
 
@@ -94,6 +99,8 @@
   var noticeEl = document.getElementById("notice");
   var DATA = null;
   var openDetails = {};
+  var extraHistory = {};   // scenarioId -> delší historie (po „Načíst starší běhy“)
+  var exDetails = {};      // executionId -> detail běhu (nebo {loading:true} / {error:"…"})
 
   function api(path, opts){
     opts = opts || {};
@@ -115,6 +122,22 @@
   function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
   function notice(kind,msg){ noticeEl.className = "notice "+kind; noticeEl.textContent = msg;
     setTimeout(function(){ noticeEl.className="notice"; }, 8000); }
+  function fmtDur(ms){ if(ms < 1000) return ms+" ms"; var sec = Math.round(ms/1000); return sec < 90 ? sec+" s" : Math.round(sec/60)+" min"; }
+  function renderExDetail(d){
+    if(d.loading) return '<span class="spin"></span> Načítám detail běhu…';
+    if(d.error) return '<span style="color:var(--red)">Detail se nepodařilo načíst: '+esc(d.error)+'</span>';
+    var det = d.detail || {};
+    var out = '<b>Výsledek:</b> '+esc(det.status || "?");
+    if(det.error){
+      out += ' · <b>Chyba:</b> '+esc(det.error.message || det.error.name || JSON.stringify(det.error));
+      if(det.error.moduleName || det.error.module) out += ' · <b>Modul:</b> '+esc(det.error.moduleName || det.error.module);
+    }
+    var copy = {}; Object.keys(det).forEach(function(k){ copy[k] = det[k]; });
+    var text = JSON.stringify(copy, null, 2);
+    if(text.length > 20000) text = text.slice(0, 20000) + "\n… (zkráceno)";
+    out += '<pre>'+esc(text)+'</pre>';
+    return out;
+  }
   function statusBadge(st){
     return st === 1 ? '<span class="badge b-ok">OK</span>'
          : st === 2 ? '<span class="badge b-warn">varování</span>'
@@ -145,7 +168,7 @@
 
     var html = '<table><thead><tr>'
       + '<th>Scénář</th><th>Aktivní</th><th>Poslední běh</th><th>Běhy za '+data.daysBack+' dny</th>'
-      + '<th>Nedoběhlé</th><th>Historie v Make</th><th>Spuštění</th></tr></thead><tbody>';
+      + '<th>Nedoběhlé</th><th>Historie</th><th>Spuštění</th></tr></thead><tbody>';
 
     data.scenarios.forEach(function(sc){
       var id = sc.scenarioId;
@@ -177,7 +200,7 @@
       var hist = '<div class="links">'
         + '<a class="lnk" href="'+esc(sc.makeHistoryUrl)+'" target="_blank" rel="noopener">historie běhů ↗</a>'
         + '<a class="lnk" href="'+esc(sc.makeEditUrl)+'" target="_blank" rel="noopener">otevřít scénář ↗</a>'
-        + '<button class="btn-link" data-toggle="'+id+'">'+(isOpen ? "▾ skrýt detail" : "▸ detail ("+sc.errors.length+" chyb, "+sc.pending.length+" nedoběhlých)")+'</button>'
+        + '<button class="btn-link" data-toggle="'+id+'">'+(isOpen ? "▾ skrýt historii" : "▸ historie ("+sc.history.length+" běhů, "+sc.errors.length+" chyb, "+sc.pending.length+" nedoběhlých)")+'</button>'
         + '</div>';
 
       // Spuštění
@@ -211,18 +234,29 @@
           });
           html += '</table>';
         }
-        html += '<h4>Chybové běhy za poslední '+data.daysBack+' dny</h4>';
-        if(sc.errors.length === 0){
-          html += '<div class="small">Žádné.</div>';
+        var hist = extraHistory[id] || sc.history;
+        html += '<h4>Historie běhů – posledních '+hist.length+' (celkem načteno '+Math.max(sc.historyTotal, hist.length)+')</h4>';
+        if(hist.length === 0){
+          html += '<div class="small">Žádné běhy.</div>';
         } else {
-          html += '<table class="inner"><tr><th>Kdy</th><th>Stav</th><th>Modul / chyba</th><th></th></tr>';
-          sc.errors.forEach(function(er){
-            var msg = (er.errorModule ? "["+esc(er.errorModule)+"] " : "") + esc(er.errorMessage || "");
-            var act = '<a class="lnk" href="'+esc(er.detailUrl)+'" target="_blank" rel="noopener">detail ↗</a>';
-            if(er.isReplayable) act = '<button class="btn-ghost" data-replay="'+esc(er.executionId)+'" data-scenario="'+id+'">Spustit znovu tento běh</button> ' + act;
-            html += '<tr><td>'+fmtDate(er.timestamp)+'</td><td>'+statusBadge(er.status)+'</td><td class="err-msg">'+(msg||"—")+'</td><td style="white-space:nowrap">'+act+'</td></tr>';
+          html += '<table class="inner"><tr><th>Kdy</th><th>Stav</th><th>Trvání</th><th>Operací</th><th>Typ</th><th>Chyba</th><th></th></tr>';
+          hist.forEach(function(ex){
+            var msg = (ex.errorModule ? "["+esc(ex.errorModule)+"] " : "") + esc(ex.errorMessage || "");
+            var act = '<div class="row-actions">';
+            act += '<button class="btn-ghost btn-sm" data-exdetail="'+esc(ex.executionId)+'" data-scenario="'+id+'">co se stalo</button>';
+            if(ex.isReplayable) act += '<button class="btn-primary btn-sm" data-replay="'+esc(ex.executionId)+'" data-scenario="'+id+'">Spustit znovu</button>';
+            act += '<a class="lnk" href="'+esc(ex.detailUrl)+'" target="_blank" rel="noopener">v Make ↗</a></div>';
+            var typ = ex.type === "manual" ? "ručně" : ex.type === "auto" ? "automaticky" : esc(ex.type||"");
+            if(ex.replayOf) typ += " (přehrání)";
+            html += '<tr><td style="white-space:nowrap">'+fmtDate(ex.timestamp)+'</td><td>'+statusBadge(ex.status)+'</td>'
+              + '<td>'+(ex.duration != null ? fmtDur(ex.duration) : "")+'</td><td>'+(ex.operations != null ? ex.operations : "")+'</td>'
+              + '<td class="small">'+typ+'</td><td class="err-msg">'+(msg||"—")+'</td><td>'+act+'</td></tr>';
+            if(exDetails[ex.executionId]){
+              html += '<tr><td colspan="7"><div class="exdetail" id="exd-'+esc(ex.executionId)+'">'+renderExDetail(exDetails[ex.executionId])+'</div></td></tr>';
+            }
           });
           html += '</table>';
+          if(!extraHistory[id]) html += '<div style="margin-top:8px"><button class="btn-refresh btn-sm" data-more="'+id+'">Načíst starší běhy (až 100)</button></div>';
         }
         html += '</td></tr>';
       }
@@ -255,6 +289,24 @@
         if(!confirm("Přehrát tento běh znovu se stejnými vstupními daty?")) return;
         act(btn, btn.textContent, "replay", {scenarioId: Number(btn.getAttribute("data-scenario")), executionId: btn.getAttribute("data-replay")},
           function(r){ return "Běh byl přehrán znovu" + (r.executionId ? " (nový běh "+r.executionId+")" : "") + "."; });
+      };
+    });
+    document.querySelectorAll("[data-more]").forEach(function(btn){
+      btn.onclick = function(){
+        var id = btn.getAttribute("data-more");
+        btn.disabled = true; btn.textContent = "Načítám…";
+        api("history?scenarioId="+id+"&limit=100").then(function(r){ extraHistory[id] = r.executions; render(); })
+          .catch(function(e){ notice("err","Historii se nepodařilo načíst: "+e.message); btn.disabled=false; btn.textContent="Načíst starší běhy (až 100)"; });
+      };
+    });
+    document.querySelectorAll("[data-exdetail]").forEach(function(btn){
+      btn.onclick = function(){
+        var exId = btn.getAttribute("data-exdetail"), scId = btn.getAttribute("data-scenario");
+        if(exDetails[exId] && !exDetails[exId].loading){ delete exDetails[exId]; render(); return; }
+        exDetails[exId] = {loading:true}; render();
+        api("execution?scenarioId="+scId+"&executionId="+encodeURIComponent(exId))
+          .then(function(r){ exDetails[exId] = {detail: r.detail}; render(); })
+          .catch(function(e){ exDetails[exId] = {error: e.message}; render(); });
       };
     });
     document.querySelectorAll("[data-dlq]").forEach(function(btn){

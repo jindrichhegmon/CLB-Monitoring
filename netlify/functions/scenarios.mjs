@@ -15,4 +15,5 @@ export const SCENARIOS = [
     id: 7734406,
     name: "A. MEDISTAR – Načtení dat po importu z Excelu do PacientiVykony a spuštění statistik",
   },
+  { id: 4825799, name: "MEDISTAR-STATISTIKY – kompletní tabulky do Modré hlavy" },
 ];

@@ -2,7 +2,9 @@
 // Bez přihlašování: kdo zná adresu webu, může scénáře znovu spouštět.
 //
 // Obsluhuje cesty /api/*:
-//   GET  /api/overview                     tabulka sledovaných scénářů (aktivní, poslední běh, nedoběhlé, chyby)
+//   GET  /api/overview                     tabulka sledovaných scénářů (aktivní, poslední běh, nedoběhlé, historie)
+//   GET  /api/history?scenarioId=&limit=   historie běhů scénáře (výchozí 100 posledních)
+//   GET  /api/execution?scenarioId=&executionId=   detail jednoho běhu (moduly, chyba)
 //   POST /api/rerun      {scenarioId}      spustit scénář znovu (on-demand scénář se spustí, scénář s webhookem
 //                                          přehraje poslední běh se stejnými daty)
 //   POST /api/replay     {scenarioId, executionId}   přehrát konkrétní běh z historie
@@ -88,6 +90,8 @@ export function createMakeClient(settings, fetchImpl = globalThis.fetch) {
       call(`/scenarios/${scenarioId}/replay`, { method: "POST", body: { executionIds: [executionId] } }),
     runScenario: (scenarioId) =>
       call(`/scenarios/${scenarioId}/run`, { method: "POST", body: { data: {}, responsive: false } }),
+    getExecutionDetail: (scenarioId, executionId) =>
+      call(`/scenarios/${scenarioId}/executions/${encodeURIComponent(executionId)}`, { query: { maxBytes: 200000 } }),
   };
 }
 
@@ -107,17 +111,23 @@ function isExecution(log) {
   return log && typeof log.status === "number" && typeof log.id === "string" && log.id.length >= 16;
 }
 
-function mapExecution(ex, urls) {
+export function mapExecution(ex, urls) {
   return {
     executionId: ex.id,
     timestamp: ex.timestamp,
     status: ex.status,
+    duration: ex.duration ?? null,
+    operations: ex.operations ?? null,
+    type: ex.type || "",
+    replayOf: ex.replayOfExecutionId || null,
     errorModule: ex.error?.name || "",
     errorMessage: ex.error?.message || "",
     isReplayable: ex.isReplayable === true,
     detailUrl: urls.execution(ex.id),
   };
 }
+
+const HISTORY_IN_OVERVIEW = 20;
 
 /** Souhrnný stav řádku: ok | warn | error + krátký text. */
 export function evaluateHealth({ scenario, executions, pending, daysBack, now = Date.now() }) {
@@ -221,6 +231,8 @@ export async function buildOverview(client, settings, now = Date.now()) {
         rerun,
         pending,
         errors: inPeriod.filter((ex) => ex.status !== STATUS_OK).map((ex) => mapExecution(ex, urls)),
+        history: executions.slice(0, HISTORY_IN_OVERVIEW).map((ex) => mapExecution(ex, urls)),
+        historyTotal: executions.length,
       };
     })
   );
@@ -249,6 +261,25 @@ export async function handle(req, { settings = getSettings(), client = createMak
   try {
     if (method === "GET" && (route === "overview" || route === "errors")) {
       return json(200, await buildOverview(client, settings));
+    }
+
+    if (method === "GET" && route === "history") {
+      const scenarioId = Number(url.searchParams.get("scenarioId"));
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 500);
+      if (!scenarioId) return json(400, { error: "Chybí scenarioId." });
+      const urls = makeUrls(settings, scenarioId);
+      const executions = (await client.listExecutions(scenarioId, limit)).filter(isExecution)
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .map((ex) => mapExecution(ex, urls));
+      return json(200, { scenarioId, executions });
+    }
+
+    if (method === "GET" && route === "execution") {
+      const scenarioId = Number(url.searchParams.get("scenarioId"));
+      const executionId = url.searchParams.get("executionId") || "";
+      if (!scenarioId || !/^[0-9a-f]{32}$/i.test(executionId)) return json(400, { error: "Chybí scenarioId nebo executionId." });
+      const detail = await client.getExecutionDetail(scenarioId, executionId);
+      return json(200, { scenarioId, executionId, detail });
     }
 
     if (method === "POST" && route === "rerun") {
