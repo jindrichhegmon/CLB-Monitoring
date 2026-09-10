@@ -86,10 +86,10 @@
   <div class="card"><div class="scroll" id="content"><p class="empty"><span class="spin"></span> Načítám data z Make…</p></div></div>
 
   <footer>
-    <b>Aktivní</b> = scénář je v Make zapnutý. <b>Poslední běh</b> = výsledek posledního spuštění v Make (OK / varování / chyba).
+    <b>Aktivní</b> = scénář je v Make zapnutý; tlačítkem „Zapnout scénář“ / „vypnout“ ho přepnete přímo odsud. <b>Poslední běh</b> = výsledek posledního spuštění v Make (OK / varování / chyba).
     <b>Nedoběhlé</b> = běhy, které Make uložil jako neúplné; „Spustit nedoběhlé“ je dokončí od modulu, kde spadly (nic se nezapíše dvakrát).
-    <b>Spustit znovu</b> = on-demand scénář se spustí, scénář s webhookem se přehraje se stejnými vstupními daty jako poslední běh (celý od začátku).
-    <b>▸ historie</b> rozbalí posledních 20 běhů přímo tady (bez přihlášení do Make) – u každého lze zobrazit, co se v běhu stalo („co se stalo“), a spustit ho znovu.
+    <b>Spustit znovu</b> = on-demand scénář se spustí; scénář s webhookem se přehraje se stejnými vstupními daty jako poslední běh (celý od začátku). Když poslední běh přehrát nejde, zkusí se starší.
+    <b>▸ Zobrazit historii</b> rozbalí posledních 20 běhů přímo tady (bez přihlášení do Make) – u každého lze zobrazit, co se v běhu stalo („co se stalo“), a spustit právě ten běh znovu.
     Sloupec „Běhy za <span id="daysBack">3</span> dny“ počítá běhy v tomto období.
   </footer>
 </div>
@@ -168,16 +168,18 @@
 
     var html = '<table><thead><tr>'
       + '<th>Scénář</th><th>Aktivní</th><th>Poslední běh</th><th>Běhy za '+data.daysBack+' dny</th>'
-      + '<th>Nedoběhlé</th><th>Historie</th><th>Spuštění</th></tr></thead><tbody>';
+      + '<th>Nedoběhlé</th><th>Historie běhů</th><th>Spustit znovu</th></tr></thead><tbody>';
 
     data.scenarios.forEach(function(sc){
       var id = sc.scenarioId;
       var isOpen = !!openDetails[id];
 
       // Aktivní
-      var active = sc.isActive === true ? '<span class="badge b-ok">ANO</span>'
-                 : sc.isActive === false ? '<span class="badge b-err">NE</span><br><a class="lnk" href="'+esc(sc.makeEditUrl)+'" target="_blank" rel="noopener">zapnout v Make ↗</a>'
-                 : '<span class="badge b-muted">?</span>';
+      var active = sc.isActive === true
+        ? '<div class="actions"><span class="badge b-ok">ANO</span><button class="btn-link" data-activate="'+id+'" data-active="false">vypnout</button></div>'
+        : sc.isActive === false
+          ? '<div class="actions"><span class="badge b-err">NE</span><button class="btn-warn" data-activate="'+id+'" data-active="true">Zapnout scénář</button></div>'
+          : '<span class="badge b-muted">?</span>';
 
       // Poslední běh
       var last = sc.lastRun
@@ -196,24 +198,16 @@
         : '<span class="badge b-warn">'+sc.pending.length+'</span> '
           + '<button class="btn-warn" data-retryall="'+id+'">Spustit nedoběhlé ('+sc.pending.length+')</button>';
 
-      // Historie
+      // Historie – tlačítko rozbalí historii přímo tady; odkazy do Make jsou jen doplněk
       var hist = '<div class="links">'
-        + '<a class="lnk" href="'+esc(sc.makeHistoryUrl)+'" target="_blank" rel="noopener">historie běhů ↗</a>'
-        + '<a class="lnk" href="'+esc(sc.makeEditUrl)+'" target="_blank" rel="noopener">otevřít scénář ↗</a>'
-        + '<button class="btn-link" data-toggle="'+id+'">'+(isOpen ? "▾ skrýt historii" : "▸ historie ("+sc.history.length+" běhů, "+sc.errors.length+" chyb, "+sc.pending.length+" nedoběhlých)")+'</button>'
+        + '<button class="'+(isOpen ? 'btn-primary' : 'btn-ghost')+'" data-toggle="'+id+'">'+(isOpen ? "▾ Skrýt historii" : "▸ Zobrazit historii ("+sc.history.length+" běhů)")+'</button>'
+        + '<span class="small">'+sc.errors.length+' chyb za '+data.daysBack+' dny · '+sc.pending.length+' nedoběhlých</span>'
+        + '<span class="small"><a class="lnk" href="'+esc(sc.makeHistoryUrl)+'" target="_blank" rel="noopener">v Make ↗</a> · <a class="lnk" href="'+esc(sc.makeEditUrl)+'" target="_blank" rel="noopener">scénář v Make ↗</a></span>'
         + '</div>';
 
-      // Spuštění
-      var run = '<div class="actions">';
-      if(sc.rerun.mode === "run"){
-        run += '<button class="btn-primary" data-rerun="'+id+'">'+esc(sc.rerun.label)+'</button>';
-      } else if(sc.rerun.mode === "replay"){
-        run += '<button class="btn-primary" data-rerun="'+id+'" title="Přehraje běh z '+fmtDate(sc.rerun.timestamp)+' se stejnými vstupními daty">'+esc(sc.rerun.label)+'</button>'
-             + '<span class="small">přehraje běh z '+fmtDate(sc.rerun.timestamp)+'</span>';
-      } else {
-        run += '<span class="small">'+esc(sc.rerun.label)+'</span>';
-      }
-      run += '</div>';
+      // Spuštění – tlačítko je vždy; backend si sám vybere způsob (run / přehrání posledního běhu)
+      var run = '<div class="actions"><button class="btn-primary" data-rerun="'+id+'">'+esc(sc.rerun.label)+'</button>';
+      run += '<span class="small">'+(sc.rerun.mode === "run" ? "spustí scénář v Make" : "přehraje běh z "+fmtDate(sc.rerun.timestamp)+" se stejnými daty")+'</span></div>';
 
       html += '<tr class="main s-'+esc(sc.health.level)+'">'
         + '<td><div class="name">'+esc(sc.name)+'</div><div class="small">ID '+id+(sc.folder ? ' · '+esc(sc.folder) : '')+(sc.scheduling ? ' · '+esc(sc.scheduling) : '')+'</div>'
@@ -244,7 +238,7 @@
             var msg = (ex.errorModule ? "["+esc(ex.errorModule)+"] " : "") + esc(ex.errorMessage || "");
             var act = '<div class="row-actions">';
             act += '<button class="btn-ghost btn-sm" data-exdetail="'+esc(ex.executionId)+'" data-scenario="'+id+'">co se stalo</button>';
-            if(ex.isReplayable) act += '<button class="btn-primary btn-sm" data-replay="'+esc(ex.executionId)+'" data-scenario="'+id+'">Spustit znovu</button>';
+            if(ex.canReplay !== false) act += '<button class="btn-primary btn-sm" data-replay="'+esc(ex.executionId)+'" data-scenario="'+id+'">Spustit znovu</button>';
             act += '<a class="lnk" href="'+esc(ex.detailUrl)+'" target="_blank" rel="noopener">v Make ↗</a></div>';
             var typ = ex.type === "manual" ? "ručně" : ex.type === "auto" ? "automaticky" : esc(ex.type||"");
             if(ex.replayOf) typ += " (přehrání)";
@@ -281,7 +275,7 @@
       btn.onclick = function(){
         if(!confirm("Opravdu spustit scénář znovu?")) return;
         act(btn, btn.textContent, "rerun", {scenarioId: Number(btn.getAttribute("data-rerun"))},
-          function(r){ return r.mode === "run" ? "Scénář byl spuštěn." : "Poslední běh byl přehrán znovu" + (r.executionId ? " (nový běh "+r.executionId+")" : "") + "."; });
+          function(r){ return r.mode === "run" ? "Scénář byl spuštěn v Make." : "Běh z "+fmtDate(r.replayedTimestamp)+" byl přehrán znovu" + (r.executionId ? " (nový běh "+r.executionId+")" : "") + "."; });
       };
     });
     document.querySelectorAll("[data-replay]").forEach(function(btn){
@@ -289,6 +283,14 @@
         if(!confirm("Přehrát tento běh znovu se stejnými vstupními daty?")) return;
         act(btn, btn.textContent, "replay", {scenarioId: Number(btn.getAttribute("data-scenario")), executionId: btn.getAttribute("data-replay")},
           function(r){ return "Běh byl přehrán znovu" + (r.executionId ? " (nový běh "+r.executionId+")" : "") + "."; });
+      };
+    });
+    document.querySelectorAll("[data-activate]").forEach(function(btn){
+      btn.onclick = function(){
+        var on = btn.getAttribute("data-active") === "true";
+        if(!on && !confirm("Opravdu vypnout scénář v Make? Přestane reagovat na webhook / plán.")) return;
+        act(btn, btn.textContent, "activate", {scenarioId: Number(btn.getAttribute("data-activate")), active: on},
+          function(r){ return r.isActive ? "Scénář je zapnutý (aktivní)." : "Scénář je vypnutý."; });
       };
     });
     document.querySelectorAll("[data-more]").forEach(function(btn){

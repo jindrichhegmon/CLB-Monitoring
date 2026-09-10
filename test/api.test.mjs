@@ -61,6 +61,8 @@ const routes = {
   "GET /api/v2/scenarios/5535556": { scenario: { id: 5535556, name: "PM103 statistiky", isActive: true, scheduling: { type: "on-demand" } } },
   "GET /api/v2/scenarios/5535556/logs": { scenarioLogs: [] },
   "POST /api/v2/scenarios/5535556/run": { executionId: "run-1" },
+  "POST /api/v2/scenarios/7734406/start": { scenario: { id: 7734406, isActive: true } },
+  "POST /api/v2/scenarios/7734406/stop": { scenario: { id: 7734406, isActive: false } },
   "GET /api/v2/scenarios/7734429/executions/90dde4e0f70f4398b34e18a97b3b89bc": { status: "ERROR", error: { name: "InconsistencyError", message: "Transaction has been aborted." } },
 };
 
@@ -174,7 +176,7 @@ test("HTTP: retry, retry-all a replay volají správné endpointy Make", async (
   const body = await res.json();
   assert.equal(body.scenarios.length, 2);
   assert.equal(body.scenarios[0].rerun.mode, "replay", "webhook scénář se spouští přehráním");
-  assert.equal(body.scenarios[0].rerun.executionId, "eec344e5d1cd40c3893ae240e9a4fe97", "přehrává se nejnovější přehratelný běh");
+  assert.equal(body.scenarios[0].rerun.executionId, "eec344e5d1cd40c3893ae240e9a4fe97", "nabízí se nejnovější běh");
   assert.equal(body.scenarios[0].okInPeriod, 1);
 });
 
@@ -186,7 +188,8 @@ test("HTTP: rerun přehraje poslední běh u webhook scénáře a spustí on-dem
 
   let res = await post({ scenarioId: 7734429 });
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { ok: true, mode: "replay", replayedExecutionId: "eec344e5d1cd40c3893ae240e9a4fe97", executionId: "replay-b1" });
+  const rr = await res.json();
+  assert.equal(rr.mode, "replay"); assert.equal(rr.replayedExecutionId, "eec344e5d1cd40c3893ae240e9a4fe97"); assert.equal(rr.executionId, "replay-b1");
   assert.equal(calls.at(-1).path, "/api/v2/scenarios/7734429/replay");
 
   res = await post({ scenarioId: 5535556 });
@@ -199,11 +202,35 @@ test("HTTP: rerun přehraje poslední běh u webhook scénáře a spustí on-dem
   assert.equal(res.status, 400);
 });
 
-test("HTTP: rerun bez přehratelného běhu vrátí 409", async () => {
-  const { fetchImpl } = fakeFetch({ ...routes, "GET /api/v2/scenarios/7734429/logs": { scenarioLogs: [{ id: "x".repeat(32), status: 1, timestamp: iso(1), isReplayable: false }] } });
+test("HTTP: rerun zkusí další běh, když nejnovější nejde přehrát, a nakonec run", async () => {
+  // nejnovější běh Make odmítne (4xx), druhý projde
+  let calls = 0;
+  const { fetchImpl, calls: log } = fakeFetch({ ...routes, "POST /api/v2/scenarios/7734429/replay": (u, o) => {
+    calls++;
+    return calls === 1 ? new Response(JSON.stringify({ message: "Execution is not replayable" }), { status: 400 }) : { executionId: "second-ok" };
+  } });
   const client = createMakeClient(settings, fetchImpl);
-  const res = await handle(new Request("https://x.netlify.app/api/rerun", { method: "POST", body: JSON.stringify({ scenarioId: 7734429 }) }), { settings, client });
+  let res = await handle(new Request("https://x.netlify.app/api/rerun", { method: "POST", body: JSON.stringify({ scenarioId: 7734429 }) }), { settings, client });
+  assert.equal(res.status, 200);
+  const r = await res.json();
+  assert.equal(r.replayedExecutionId, "90dde4e0f70f4398b34e18a97b3b89bc");
+  assert.equal(r.executionId, "second-ok");
+  assert.equal(r.skipped, 1);
+
+  // žádný běh nejde přehrát, run selže → 409 s vysvětlením
+  const { fetchImpl: f2 } = fakeFetch({ ...routes,
+    "POST /api/v2/scenarios/7734429/replay": () => new Response(JSON.stringify({ message: "not replayable" }), { status: 400 }),
+    "POST /api/v2/scenarios/7734429/run": () => new Response(JSON.stringify({ message: "Scenario is not on-demand" }), { status: 400 }) });
+  res = await handle(new Request("https://x.netlify.app/api/rerun", { method: "POST", body: JSON.stringify({ scenarioId: 7734429 }) }), { settings, client: createMakeClient(settings, f2) });
   assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /nepodařilo spustit/);
+
+  // žádná historie → zkusí run
+  const { fetchImpl: f3, calls: c3 } = fakeFetch({ ...routes, "GET /api/v2/scenarios/7734429/logs": { scenarioLogs: [] }, "POST /api/v2/scenarios/7734429/run": { executionId: "ran" } });
+  res = await handle(new Request("https://x.netlify.app/api/rerun", { method: "POST", body: JSON.stringify({ scenarioId: 7734429 }) }), { settings, client: createMakeClient(settings, f3) });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).mode, "run");
+  assert.equal(c3.at(-1).path, "/api/v2/scenarios/7734429/run");
 });
 
 test("HTTP: chyba Make se vrátí jako 502 s textem", async () => {
@@ -250,5 +277,25 @@ test("overview obsahuje historii běhů; /api/history a /api/execution vrací da
   assert.equal(calls.at(-1).path, "/api/v2/scenarios/7734429/executions/90dde4e0f70f4398b34e18a97b3b89bc");
 
   res = await handle(new Request("https://x.netlify.app/api/execution?scenarioId=7734429&executionId=../x"), opts);
+  assert.equal(res.status, 400);
+});
+
+test("HTTP: activate zapne a vypne scénář přes /start a /stop", async () => {
+  const { fetchImpl, calls } = fakeFetch(routes);
+  const client = createMakeClient(settings, fetchImpl);
+  const opts = { settings, client };
+  const post = (body) => handle(new Request("https://x.netlify.app/api/activate", { method: "POST", body: JSON.stringify(body) }), opts);
+
+  let res = await post({ scenarioId: 7734406, active: true });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, isActive: true });
+  assert.equal(calls.at(-1).path, "/api/v2/scenarios/7734406/start");
+  assert.equal(calls.at(-1).method, "POST");
+
+  res = await post({ scenarioId: 7734406, active: false });
+  assert.deepEqual(await res.json(), { ok: true, isActive: false });
+  assert.equal(calls.at(-1).path, "/api/v2/scenarios/7734406/stop");
+
+  res = await post({});
   assert.equal(res.status, 400);
 });

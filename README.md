@@ -29,12 +29,12 @@ Seznam jde přepsat i bez zásahu do kódu proměnnou prostředí `MAKE_SCENARIO
 | Sloupec | Co znamená |
 |---|---|
 | Scénář | název, ID, složka a typ plánování; u problému krátký důvod |
-| Aktivní | ANO / NE podle Make; u NE odkaz „zapnout v Make“ |
+| Aktivní | ANO / NE podle Make; tlačítko **Zapnout scénář** (u vypnutého) nebo **vypnout** (u zapnutého) přepne stav přímo z aplikace |
 | Poslední běh | OK / varování / chyba, čas, odkaz na detail běhu v Make |
 | Běhy za N dny | počet běhů v období, z toho OK a s chybou (N = `DAYS_BACK`, výchozí 3) |
 | Nedoběhlé | počet neúplných běhů (DLQ) a tlačítko **Spustit nedoběhlé** – dokončí je od modulu, kde spadly |
-| Historie | odkazy do Make a **▸ historie**, která rozbalí přímo v aplikaci nedoběhlé běhy a posledních 20 běhů (stav, trvání, operace, chyba). U každého běhu: **co se stalo** (detail běhu z Make bez přihlášení), **Spustit znovu**, odkaz do Make. Tlačítko „Načíst starší běhy“ dotáhne až 100 běhů. |
-| Spuštění | **Spustit scénář** (on-demand scénář) nebo **Spustit znovu poslední běh** (scénář s webhookem – přehrání se stejnými vstupními daty) |
+| Historie běhů | **▸ Zobrazit historii** rozbalí přímo v aplikaci nedoběhlé běhy a posledních 20 běhů; odkazy do Make jsou jen doplněk. Rozbalí která rozbalí přímo v aplikaci nedoběhlé běhy a posledních 20 běhů (stav, trvání, operace, chyba). U každého běhu: **co se stalo** (detail běhu z Make bez přihlášení), **Spustit znovu**, odkaz do Make. Tlačítko „Načíst starší běhy“ dotáhne až 100 běhů. |
+| Spustit znovu | **Spustit scénář** (on-demand scénář) nebo **Spustit znovu** (scénář s webhookem – přehrání posledního běhu se stejnými vstupními daty; když nejde, zkusí se starší běh a nakonec běžné spuštění) |
 
 ## Struktura
 
@@ -57,6 +57,7 @@ netlify.toml                     nastavení Netlify (publish = public, functions
 | `POST /api/replay` | `{"scenarioId": 123, "executionId": "…"}` | přehrát konkrétní běh z historie |
 | `POST /api/retry` | `{"dlqId": "…"}` | spustit jeden nedoběhlý běh (`POST /dlqs/{id}/retry`) |
 | `POST /api/retry-all` | `{"scenarioId": 123}` | spustit všechny nedoběhlé běhy scénáře (`POST /dlqs/retry?scenarioId=…`) |
+| `POST /api/activate` | `{"scenarioId": 123, "active": true}` | zapnout (`POST /scenarios/{id}/start`) nebo vypnout (`/stop`) scénář |
 
 ## Nastavení v Netlify (proměnné prostředí)
 

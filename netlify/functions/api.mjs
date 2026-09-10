@@ -10,6 +10,7 @@
 //   POST /api/replay     {scenarioId, executionId}   přehrát konkrétní běh z historie
 //   POST /api/retry      {dlqId}           spustit jeden nedoběhlý běh (pokračuje od modulu, kde spadl)
 //   POST /api/retry-all  {scenarioId}      spustit všechny nedoběhlé běhy scénáře
+//   POST /api/activate   {scenarioId, active: true|false}   zapnout / vypnout scénář v Make
 //
 // Konfigurace (proměnné prostředí v Netlify):
 //   MAKE_API_TOKEN   – API token Make (alternativně MAKE_TOKEN nebo MAKE_API_KEY) – povinné
@@ -90,6 +91,8 @@ export function createMakeClient(settings, fetchImpl = globalThis.fetch) {
       call(`/scenarios/${scenarioId}/replay`, { method: "POST", body: { executionIds: [executionId] } }),
     runScenario: (scenarioId) =>
       call(`/scenarios/${scenarioId}/run`, { method: "POST", body: { data: {}, responsive: false } }),
+    activateScenario: (scenarioId) => call(`/scenarios/${scenarioId}/start`, { method: "POST" }).then((r) => r.scenario),
+    deactivateScenario: (scenarioId) => call(`/scenarios/${scenarioId}/stop`, { method: "POST" }).then((r) => r.scenario),
     getExecutionDetail: (scenarioId, executionId) =>
       call(`/scenarios/${scenarioId}/executions/${encodeURIComponent(executionId)}`, { query: { maxBytes: 200000 } }),
   };
@@ -114,6 +117,7 @@ function isExecution(log) {
 export function mapExecution(ex, urls) {
   return {
     executionId: ex.id,
+    canReplay: ex.isReplayable !== false,
     timestamp: ex.timestamp,
     status: ex.status,
     duration: ex.duration ?? null,
@@ -207,13 +211,12 @@ export async function buildOverview(client, settings, now = Date.now()) {
       const last = executions[0] || null;
       const lastReplayable = executions.find((ex) => ex.isReplayable === true) || null;
 
-      // Jak lze scénář znovu spustit: on-demand přes "run", ostatní přehráním posledního běhu.
-      let rerun = { mode: "none", label: "nelze spustit odsud" };
-      if (schedulingType === "on-demand") {
-        rerun = { mode: "run", label: "Spustit scénář" };
-      } else if (lastReplayable) {
-        rerun = { mode: "replay", label: "Spustit znovu poslední běh", executionId: lastReplayable.id, timestamp: lastReplayable.timestamp };
-      }
+      // Jak se scénář znovu spustí: on-demand přes "run", ostatní přehráním posledního běhu.
+      const rerun = schedulingType === "on-demand"
+        ? { mode: "run", label: "Spustit scénář" }
+        : last
+          ? { mode: "replay", label: "Spustit znovu", executionId: last.id, timestamp: last.timestamp }
+          : { mode: "run", label: "Spustit scénář" };
 
       return {
         scenarioId: sc.id,
@@ -291,12 +294,36 @@ export async function handle(req, { settings = getSettings(), client = createMak
         const r = await client.runScenario(id);
         return json(200, { ok: true, mode: "run", executionId: r?.executionId || null });
       }
-      const executions = (await client.listExecutions(id)).filter(isExecution)
+      // Webhook / plánovaný scénář: přehrát nejnovější běh, který Make umí přehrát.
+      const executions = (await client.listExecutions(id, 30)).filter(isExecution)
         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      const replayable = executions.find((ex) => ex.isReplayable === true);
-      if (!replayable) return json(409, { error: "Scénář nemá žádný běh, který by šel přehrát. Spusťte ho ručně v Make." });
-      const r = await client.replayExecution(id, replayable.id);
-      return json(200, { ok: true, mode: "replay", replayedExecutionId: replayable.id, executionId: r?.executionId || null });
+      const attempts = [];
+      for (const ex of executions.slice(0, 10)) {
+        if (ex.isReplayable === false) { attempts.push(`${ex.id}: Make ho označuje jako nepřehratelný`); continue; }
+        try {
+          const r = await client.replayExecution(id, ex.id);
+          return json(200, { ok: true, mode: "replay", replayedExecutionId: ex.id, replayedTimestamp: ex.timestamp, executionId: r?.executionId || null, skipped: attempts.length });
+        } catch (err) {
+          attempts.push(`${ex.id}: ${err.message}`);
+          if (!(err.status >= 400 && err.status < 500)) throw err;
+        }
+      }
+      // Poslední pokus: běžné spuštění.
+      try {
+        const r = await client.runScenario(id);
+        return json(200, { ok: true, mode: "run", executionId: r?.executionId || null, skipped: attempts.length });
+      } catch (err) {
+        attempts.push(`run: ${err.message}`);
+      }
+      return json(409, { error: "Scénář se nepodařilo spustit: " + (executions.length ? attempts.slice(0, 3).join(" | ") : "v historii není žádný běh k přehrání.") });
+    }
+
+    if (method === "POST" && route === "activate") {
+      const { scenarioId, active } = await readJson(req);
+      if (!scenarioId) return json(400, { error: "Chybí scenarioId." });
+      const id = Number(scenarioId);
+      const scenario = active === false ? await client.deactivateScenario(id) : await client.activateScenario(id);
+      return json(200, { ok: true, isActive: scenario ? scenario.isActive === true : active !== false });
     }
 
     if (method === "POST" && route === "replay") {
