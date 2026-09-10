@@ -22,7 +22,7 @@ function fakeFetch(routes) {
   const calls = [];
   const fetchImpl = async (url, opts) => {
     const u = new URL(url);
-    calls.push({ method: opts.method, path: u.pathname, query: Object.fromEntries(u.searchParams), body: opts.body, headers: opts.headers });
+    calls.push({ method: opts.method, path: u.pathname, url: String(url), query: Object.fromEntries(u.searchParams), body: opts.body, headers: opts.headers });
     const key = `${opts.method} ${u.pathname}`;
     const handler = routes[key];
     if (!handler) return new Response(JSON.stringify({ message: "not found" }), { status: 404 });
@@ -121,6 +121,7 @@ test("buildOverview sestaví stav, DLQ a chyby pro každý scénář", async () 
   assert.ok(calls.every((c) => c.headers.authorization === `Token ${settings.token}`));
   const logsCall = calls.find((c) => c.path.endsWith("/7734429/logs"));
   assert.equal(logsCall.query["pg[limit]"], "100");
+  assert.ok(logsCall.url.includes("logs?pg[limit]=100"), "závorky se posílají doslova: " + logsCall.url);
 });
 
 test("buildOverview přežije výpadek jednoho volání Make", async () => {
@@ -332,4 +333,31 @@ test("historie: chyba načtení se propíše do historyError", async () => {
   const data = await buildOverview(createMakeClient(settings, fetchImpl), settings, NOW);
   assert.match(data.scenarios[0].historyError, /Access denied/);
   assert.equal(data.scenarios[0].history.length, 0);
+});
+
+test("historie: když Make odmítne pg[limit] (400), zkusí se další varianty dotazu", async () => {
+  const seen = [];
+  const { fetchImpl } = fakeFetch({ ...routes, "GET /api/v2/scenarios/7734429/logs": (u) => {
+    seen.push(u.search);
+    if (u.search === "") return { scenarioLogs: [{ id: "c".repeat(32), status: 1, timestamp: iso(1) }] };
+    return new Response(JSON.stringify({ message: "Bad Request" }), { status: 400 });
+  } });
+  const client = createMakeClient(settings, fetchImpl);
+  const data = await buildOverview(client, settings, NOW);
+  assert.equal(data.scenarios[0].history.length, 1);
+  assert.equal(data.scenarios[0].historyError, null);
+  assert.ok(seen.length >= 3 && seen.at(-1) === "", "poslední pokus bez parametrů: " + JSON.stringify(seen));
+
+  const res = await handle(new Request("https://x.netlify.app/api/debug?scenarioId=7734429"), { settings, client });
+  const d = await res.json();
+  assert.ok(d.attempts.length >= 2);
+  assert.equal(d.attempts.at(-1).ok, true);
+  assert.equal(d.entries, 1);
+});
+
+test("chyba Make s detail/suberrors se vypíše celá", async () => {
+  const { fetchImpl } = fakeFetch({ ...routes, "GET /api/v2/scenarios/7734429/logs": () => new Response(JSON.stringify({ message: "Validation failed for 1 parameter(s).", detail: "Bad request", code: "IM002", suberrors: [{ message: "Invalid value for pg[limit]" }] }), { status: 400 }) });
+  const data = await buildOverview(createMakeClient(settings, fetchImpl), settings, NOW);
+  assert.match(data.scenarios[0].historyError, /Validation failed/);
+  assert.match(data.scenarios[0].historyError, /Invalid value for pg\[limit\]/);
 });

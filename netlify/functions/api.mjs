@@ -51,15 +51,20 @@ export function createMakeClient(settings, fetchImpl = globalThis.fetch) {
   const isApiKey = /^[0-9a-f-]{36}$/i.test(settings.token);
   const authorization = `${isApiKey ? "Token" : "Bearer"} ${settings.token}`;
 
-  async function call(path, { method = "GET", body, query } = {}) {
+  async function call(path, { method = "GET", body, query, rawQuery } = {}) {
     if (!settings.token) throw new Error("Chybí MAKE_API_TOKEN (proměnná prostředí v Netlify).");
-    const url = new URL(base + path);
-    if (query) {
+    let urlStr = base + path;
+    if (rawQuery) {
+      // parametry připojené doslova (Make očekává pg[limit]=… bez kódování závorek)
+      urlStr += (urlStr.includes("?") ? "&" : "?") + rawQuery;
+    } else if (query) {
+      const parts = [];
       for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+        if (v !== undefined && v !== null) parts.push(`${k}=${encodeURIComponent(String(v))}`);
       }
+      if (parts.length) urlStr += (urlStr.includes("?") ? "&" : "?") + parts.join("&");
     }
-    const res = await fetchImpl(url.toString(), {
+    const res = await fetchImpl(urlStr, {
       method,
       headers: { authorization, "content-type": "application/json", "user-agent": "makechyby-netlify/3.0" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -69,25 +74,55 @@ export function createMakeClient(settings, fetchImpl = globalThis.fetch) {
     try { json = text ? JSON.parse(text) : null; } catch { /* ne-JSON odpověď */ }
     if (!res.ok) {
       let detail = (json && (json.message || json.detail || json.error)) || text || `HTTP ${res.status}`;
+      if (json && json.detail && json.message && json.detail !== json.message) detail = `${json.message} (${json.detail})`;
+      if (json && Array.isArray(json.suberrors) && json.suberrors.length) detail += " – " + json.suberrors.map((e) => e.message || JSON.stringify(e)).join("; ");
       if (res.status === 401 || res.status === 403) {
         detail += " – Make API token v Netlify (MAKE_API_TOKEN) nemá pro tuto akci oprávnění (scope). Zapnutí/vypnutí scénáře vyžaduje scenarios:write, spuštění scenarios:run, nedoběhlé běhy dlqs:write. V Make: profil → API/MCP Access → vytvořit token s těmito scopes, uložit ho do Netlify a poté znovu nasadit web (Deploys → Trigger deploy), jinak funkce běží se starým tokenem.";
       }
-      const err = new Error(`Make API ${method} ${path}: ${detail}`);
+      const err = new Error(`Make API ${method} ${path}${rawQuery ? "?" + rawQuery : ""}: ${res.status} ${detail}`.slice(0, 600));
       err.status = res.status;
+      err.body = text.slice(0, 500);
       throw err;
     }
     return json;
   }
 
+  /** Zkusí varianty dotazu za sebou; vrátí první, která projde. Zaznamená pokusy pro diagnostiku. */
+  async function firstWorking(path, variants, attempts = []) {
+    let lastErr = null;
+    for (const rawQuery of variants) {
+      try {
+        const r = await call(path, { rawQuery });
+        attempts.push({ query: rawQuery || "(bez parametrů)", ok: true });
+        return r;
+      } catch (err) {
+        attempts.push({ query: rawQuery || "(bez parametrů)", ok: false, status: err.status || null, body: err.body || err.message });
+        lastErr = err;
+        if (!(err.status >= 400 && err.status < 500)) break; // síťová/5xx chyba – nemá smysl zkoušet dál
+      }
+    }
+    throw lastErr;
+  }
+
+  const logVariants = (limit) => [`pg[limit]=${limit}`, `pg%5Blimit%5D=${limit}`, `pg[limit]=${Math.min(limit, 50)}`, ""];
+
   return {
     getScenario: (scenarioId) => call(`/scenarios/${scenarioId}`).then((r) => r.scenario),
     listExecutions: (scenarioId, limit = 100) =>
-      call(`/scenarios/${scenarioId}/logs`, { query: { "pg[limit]": limit } })
+      firstWorking(`/scenarios/${scenarioId}/logs`, logVariants(limit))
         .then((r) => (Array.isArray(r?.scenarioLogs) ? r.scenarioLogs : Array.isArray(r) ? r : [])),
-    // surová odpověď pro diagnostiku
-    rawExecutions: (scenarioId, limit = 5) => call(`/scenarios/${scenarioId}/logs`, { query: { "pg[limit]": limit } }),
+    // surová odpověď + záznam pokusů pro diagnostiku
+    rawExecutions: async (scenarioId, limit = 5) => {
+      const attempts = [];
+      try {
+        const raw = await firstWorking(`/scenarios/${scenarioId}/logs`, logVariants(limit), attempts);
+        return { raw, attempts };
+      } catch (err) {
+        return { raw: null, attempts, error: err.message };
+      }
+    },
     listIncomplete: (scenarioId) =>
-      call(`/dlqs`, { query: { scenarioId, "pg[limit]": 100 } }).then((r) => r.dlqs || []),
+      firstWorking(`/dlqs`, [`scenarioId=${scenarioId}&pg[limit]=100`, `scenarioId=${scenarioId}`]).then((r) => r.dlqs || []),
     retryIncomplete: (dlqId) => call(`/dlqs/${encodeURIComponent(dlqId)}/retry`, { method: "POST" }),
     retryAllIncomplete: (scenarioId) =>
       call(`/dlqs/retry`, { method: "POST", query: { scenarioId }, body: { all: true } }),
@@ -281,17 +316,16 @@ export async function handle(req, { settings = getSettings(), client = createMak
     if (method === "GET" && route === "debug") {
       const scenarioId = Number(url.searchParams.get("scenarioId")) || settings.scenarios[0]?.id;
       const out = { scenarioId, zone: settings.zone, tokenSet: !!settings.token, tokenLooksLikeApiKey: /^[0-9a-f-]{36}$/i.test(settings.token) };
-      try {
-        const raw = await client.rawExecutions(scenarioId, 5);
+      const { raw, attempts, error } = await client.rawExecutions(scenarioId, 5);
+      out.attempts = attempts;
+      if (error) out.error = error;
+      if (raw) {
         out.rawType = Array.isArray(raw) ? "array" : typeof raw;
         out.rawKeys = raw && typeof raw === "object" ? Object.keys(raw) : null;
         const arr = Array.isArray(raw?.scenarioLogs) ? raw.scenarioLogs : Array.isArray(raw) ? raw : [];
         out.entries = arr.length;
         out.sample = arr.slice(0, 3);
         out.recognizedAsExecutions = arr.filter(isExecution).length;
-      } catch (err) {
-        out.error = err.message;
-        out.status = err.status || null;
       }
       return json(200, out);
     }
