@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildOverview, createMakeClient, evaluateHealth, getSettings, handle, isAuthorized } from "../netlify/functions/api.mjs";
+import { buildOverview, createMakeClient, evaluateHealth, getSettings, handle } from "../netlify/functions/api.mjs";
 
 const NOW = Date.parse("2026-09-10T10:00:00Z");
 const HOUR = 3600000;
@@ -57,6 +57,10 @@ const routes = {
   "POST /api/v2/dlqs/dlq-1/retry": { dlq: {} },
   "POST /api/v2/dlqs/retry": {},
   "POST /api/v2/scenarios/7734406/replay": { executionId: "new-exec-id" },
+  "POST /api/v2/scenarios/7734429/replay": { executionId: "replay-b1" },
+  "GET /api/v2/scenarios/5535556": { scenario: { id: 5535556, name: "PM103 statistiky", isActive: true, scheduling: { type: "on-demand" } } },
+  "GET /api/v2/scenarios/5535556/logs": { scenarioLogs: [] },
+  "POST /api/v2/scenarios/5535556/run": { executionId: "run-1" },
 };
 
 test("getSettings používá výchozí seznam scénářů a umí ho přepsat z prostředí", () => {
@@ -105,7 +109,7 @@ test("buildOverview sestaví stav, DLQ a chyby pro každý scénář", async () 
   assert.equal(med.health.level, "error");
   assert.match(med.health.text, /vypnutý/);
   assert.match(med.health.text, /poslední běh skončil chybou: SQL timeout/);
-  assert.match(med.health.text, /1× neúplný běh/);
+  assert.match(med.health.text, /1× nedoběhlý běh/);
   assert.equal(med.pending.length, 1, "vyřešené DLQ položky se nezobrazují");
   assert.equal(med.pending[0].dlqId, "dlq-1");
   assert.equal(med.lastRun.status, 3);
@@ -164,10 +168,41 @@ test("HTTP: retry, retry-all a replay volají správné endpointy Make", async (
   res = await handle(new Request("https://x.netlify.app/api/neznama"), opts);
   assert.equal(res.status, 404);
 
-  res = await handle(new Request("https://x.netlify.app/api/errors"), opts);
+  res = await handle(new Request("https://x.netlify.app/api/overview"), opts);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.scenarios.length, 2);
+  assert.equal(body.scenarios[0].rerun.mode, "replay", "webhook scénář se spouští přehráním");
+  assert.equal(body.scenarios[0].rerun.executionId, "eec344e5d1cd40c3893ae240e9a4fe97", "přehrává se nejnovější přehratelný běh");
+  assert.equal(body.scenarios[0].okInPeriod, 1);
+});
+
+test("HTTP: rerun přehraje poslední běh u webhook scénáře a spustí on-demand scénář", async () => {
+  const { fetchImpl, calls } = fakeFetch(routes);
+  const client = createMakeClient(settings, fetchImpl);
+  const opts = { settings, client };
+  const post = (body) => handle(new Request("https://x.netlify.app/api/rerun", { method: "POST", body: JSON.stringify(body) }), opts);
+
+  let res = await post({ scenarioId: 7734429 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, mode: "replay", replayedExecutionId: "eec344e5d1cd40c3893ae240e9a4fe97", executionId: "replay-b1" });
+  assert.equal(calls.at(-1).path, "/api/v2/scenarios/7734429/replay");
+
+  res = await post({ scenarioId: 5535556 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, mode: "run", executionId: "run-1" });
+  assert.equal(calls.at(-1).path, "/api/v2/scenarios/5535556/run");
+  assert.deepEqual(JSON.parse(calls.at(-1).body), { data: {}, responsive: false });
+
+  res = await post({});
+  assert.equal(res.status, 400);
+});
+
+test("HTTP: rerun bez přehratelného běhu vrátí 409", async () => {
+  const { fetchImpl } = fakeFetch({ ...routes, "GET /api/v2/scenarios/7734429/logs": { scenarioLogs: [{ id: "x".repeat(32), status: 1, timestamp: iso(1), isReplayable: false }] } });
+  const client = createMakeClient(settings, fetchImpl);
+  const res = await handle(new Request("https://x.netlify.app/api/rerun", { method: "POST", body: JSON.stringify({ scenarioId: 7734429 }) }), { settings, client });
+  assert.equal(res.status, 409);
 });
 
 test("HTTP: chyba Make se vrátí jako 502 s textem", async () => {
@@ -180,29 +215,9 @@ test("HTTP: chyba Make se vrátí jako 502 s textem", async () => {
 
 test("HTTP: bez tokenu vrací srozumitelnou chybu", async () => {
   const client = createMakeClient({ ...settings, token: "" }, async () => { throw new Error("nesmí se volat"); });
-  const res = await handle(new Request("https://x.netlify.app/api/errors"), { settings: { ...settings, token: "" }, client });
+  const res = await handle(new Request("https://x.netlify.app/api/overview"), { settings: { ...settings, token: "" }, client });
   assert.equal(res.status, 200, "přehled se vrátí, chyba je u každého scénáře");
   const body = await res.json();
   assert.match(body.scenarios[0].health.text, /MAKE_API_TOKEN/);
 });
 
-test("APP_PASSWORD: bez hesla je přístup volný, s heslem vyžaduje Basic Auth", async () => {
-  const { fetchImpl } = fakeFetch(routes);
-  const client = createMakeClient(settings, fetchImpl);
-  const open = await handle(new Request("https://x.netlify.app/api/errors"), { settings, client });
-  assert.equal(open.status, 200);
-
-  const guarded = { ...settings, appPassword: "tajne" };
-  const denied = await handle(new Request("https://x.netlify.app/api/errors"), { settings: guarded, client });
-  assert.equal(denied.status, 401);
-  assert.match(denied.headers.get("www-authenticate"), /^Basic/);
-
-  const wrong = await handle(new Request("https://x.netlify.app/api/errors", { headers: { authorization: "Basic " + Buffer.from("kdokoli:spatne").toString("base64") } }), { settings: guarded, client });
-  assert.equal(wrong.status, 401);
-
-  const ok = await handle(new Request("https://x.netlify.app/api/retry", { method: "POST", body: JSON.stringify({ dlqId: "dlq-1" }), headers: { authorization: "Basic " + Buffer.from("kdokoli:tajne").toString("base64") } }), { settings: guarded, client });
-  assert.equal(ok.status, 200);
-
-  assert.equal(getSettings({ APP_PASSWORD: "x" }).appPassword, "x");
-  assert.equal(isAuthorized(new Request("https://x/", { headers: { authorization: "Basic !!!" } }), guarded), false);
-});

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scénáře Make — přehled a spouštění</title>
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#1859a9">
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#ffffff; --text:#1a2733; --muted:#5f7081;
+    --border:#e2e8ee; --red:#c0392b; --red-bg:#fdf0ee; --amber:#8a6d1a; --amber-bg:#fdf7e2;
+    --green:#1e7d46; --green-bg:#e9f7ef; --blue:#1859a9; --blue-bg:#eaf1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.45}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 16px 60px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  h1{font-size:22px;margin:0}
+  .sub{color:var(--muted);font-size:13px}
+  .summary{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+  .chip{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:12.5px}
+  .chip.c-ok{border-color:var(--green);color:var(--green)} .chip.c-warn{border-color:var(--amber);color:var(--amber)} .chip.c-error{border-color:var(--red);color:var(--red)}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:900px}
+  th{color:var(--muted);font-weight:600;text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;white-space:nowrap;background:#fafbfc}
+  td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  tr.main:last-child td{border-bottom:none}
+  tr.main.s-error>td:first-child{box-shadow:inset 4px 0 0 var(--red)}
+  tr.main.s-warn>td:first-child{box-shadow:inset 4px 0 0 var(--amber)}
+  tr.main.s-ok>td:first-child{box-shadow:inset 4px 0 0 var(--green)}
+  .name{font-weight:600}
+  .small{color:var(--muted);font-size:12px}
+  .err-msg{color:var(--muted);font-size:12.5px;max-width:420px;overflow-wrap:anywhere}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .b-err{background:var(--red-bg);color:var(--red)}
+  .b-warn{background:var(--amber-bg);color:var(--amber)}
+  .b-ok{background:var(--green-bg);color:var(--green)}
+  .b-muted{background:#eef1f4;color:var(--muted)}
+  button{font:inherit;border:none;border-radius:7px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+  button:disabled{opacity:.5;cursor:default}
+  .btn-primary{background:var(--blue);color:#fff}
+  .btn-ghost{background:transparent;color:var(--blue);border:1px solid var(--blue)}
+  .btn-warn{background:var(--amber);color:#fff}
+  .btn-refresh{background:#fff;border:1px solid var(--border);color:var(--text)}
+  .btn-link{background:transparent;color:var(--blue);padding:2px 4px;font-size:12px;text-decoration:underline}
+  .actions{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+  a.lnk{color:var(--blue);text-decoration:none;font-size:12.5px;white-space:nowrap}
+  a.lnk:hover{text-decoration:underline}
+  .links{display:flex;flex-direction:column;gap:4px}
+  tr.detail td{background:#fafbfc;padding:10px 12px 14px 28px}
+  tr.detail h4{margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  table.inner{min-width:0;font-size:13px}
+  table.inner th,table.inner td{padding:6px 10px}
+  .empty{padding:14px 16px;color:var(--muted);font-size:13.5px}
+  .notice{padding:10px 14px;border-radius:8px;margin:0 0 14px;font-size:13.5px;display:none}
+  .notice.ok{display:block;background:var(--green-bg);color:var(--green)}
+  .notice.err{display:block;background:var(--red-bg);color:var(--red)}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #cfd8e0;border-top-color:var(--blue);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  footer{color:var(--muted);font-size:12px;margin-top:12px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<div class="wrap" id="app">
+  <header>
+    <div>
+      <h1>Scénáře Make — přehled a spouštění</h1>
+      <div class="sub" id="meta">Načítám…</div>
+    </div>
+    <div>
+      <button class="btn-refresh" id="refreshBtn">⟳ Obnovit</button>
+    </div>
+  </header>
+
+  <div class="notice" id="notice"></div>
+  <div class="summary" id="summary"></div>
+  <div class="card"><div class="scroll" id="content"><p class="empty"><span class="spin"></span> Načítám data z Make…</p></div></div>
+
+  <footer>
+    <b>Aktivní</b> = scénář je v Make zapnutý. <b>Poslední běh</b> = výsledek posledního spuštění v Make (OK / varování / chyba).
+    <b>Nedoběhlé</b> = běhy, které Make uložil jako neúplné; „Spustit nedoběhlé“ je dokončí od modulu, kde spadly (nic se nezapíše dvakrát).
+    <b>Spustit znovu</b> = on-demand scénář se spustí, scénář s webhookem se přehraje se stejnými vstupními daty jako poslední běh (celý od začátku).
+    Chybové běhy za poslední <span id="daysBack">3</span> dny jsou v detailu řádku (▸ detail), každý jde spustit znovu z historie.
+  </footer>
+</div>
+
+<script>
+(function(){
+  var noticeEl = document.getElementById("notice");
+  var DATA = null;
+  var openDetails = {};
+
+  function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({"Content-Type":"application/json"}, opts.headers||{});
+    return fetch("/api/" + path, opts).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(j){
+        if(!r.ok) throw new Error(j.error || ("HTTP "+r.status)); return j;
+      });
+    });
+  }
+
+  document.getElementById("refreshBtn").onclick = function(){ load(); };
+
+  function fmtDate(iso){
+    if(!iso) return "";
+    var d = new Date(iso);
+    return d.toLocaleDateString("cs-CZ") + " " + d.toLocaleTimeString("cs-CZ",{hour:"2-digit",minute:"2-digit"});
+  }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
+  function notice(kind,msg){ noticeEl.className = "notice "+kind; noticeEl.textContent = msg;
+    setTimeout(function(){ noticeEl.className="notice"; }, 8000); }
+  function statusBadge(st){
+    return st === 1 ? '<span class="badge b-ok">OK</span>'
+         : st === 2 ? '<span class="badge b-warn">varování</span>'
+         : st === 3 ? '<span class="badge b-err">chyba</span>'
+         : '<span class="badge b-muted">běží</span>';
+  }
+
+  function load(){
+    document.getElementById("content").innerHTML = '<p class="empty"><span class="spin"></span> Načítám data z Make…</p>';
+    api("overview").then(function(data){ DATA = data; render(); }).catch(function(e){
+      document.getElementById("content").innerHTML = '<p class="empty">Chyba načítání: '+esc(e.message)+'</p>';
+    });
+  }
+
+  function render(){
+    var data = DATA;
+    document.getElementById("meta").textContent =
+      "Chyby za poslední " + data.daysBack + " dny · aktualizováno " + fmtDate(data.generatedAt);
+    document.getElementById("daysBack").textContent = data.daysBack;
+
+    var counts = {ok:0, warn:0, error:0}, pendingTotal = 0;
+    data.scenarios.forEach(function(sc){ counts[sc.health.level] = (counts[sc.health.level]||0) + 1; pendingTotal += sc.pending.length; });
+    document.getElementById("summary").innerHTML =
+      '<span class="chip c-ok">✓ v pořádku: '+counts.ok+'</span>'
+      + '<span class="chip c-warn">! pozor: '+counts.warn+'</span>'
+      + '<span class="chip c-error">✕ problém: '+counts.error+'</span>'
+      + '<span class="chip">nedoběhlých běhů celkem: '+pendingTotal+'</span>';
+
+    var html = '<table><thead><tr>'
+      + '<th>Scénář</th><th>Aktivní</th><th>Poslední běh</th><th>Běhy za '+data.daysBack+' dny</th>'
+      + '<th>Nedoběhlé</th><th>Historie v Make</th><th>Spuštění</th></tr></thead><tbody>';
+
+    data.scenarios.forEach(function(sc){
+      var id = sc.scenarioId;
+      var isOpen = !!openDetails[id];
+
+      // Aktivní
+      var active = sc.isActive === true ? '<span class="badge b-ok">ANO</span>'
+                 : sc.isActive === false ? '<span class="badge b-err">NE</span><br><a class="lnk" href="'+esc(sc.makeEditUrl)+'" target="_blank" rel="noopener">zapnout v Make ↗</a>'
+                 : '<span class="badge b-muted">?</span>';
+
+      // Poslední běh
+      var last = sc.lastRun
+        ? statusBadge(sc.lastRun.status) + '<div class="small">'+fmtDate(sc.lastRun.timestamp)
+          + ' · <a class="lnk" href="'+esc(sc.lastRun.detailUrl)+'" target="_blank" rel="noopener">detail ↗</a></div>'
+          + (sc.lastRun.errorMessage ? '<div class="err-msg">'+esc(sc.lastRun.errorMessage)+'</div>' : '')
+        : '<span class="badge b-muted">žádný</span>';
+
+      // Běhy za období
+      var runs = sc.runsInPeriod + ' celkem'
+        + '<div class="small">'+sc.okInPeriod+' OK · '+(sc.runsInPeriod - sc.okInPeriod)+' s chybou</div>';
+
+      // Nedoběhlé
+      var pend = sc.pending.length === 0
+        ? '<span class="badge b-ok">0</span>'
+        : '<span class="badge b-warn">'+sc.pending.length+'</span> '
+          + '<button class="btn-warn" data-retryall="'+id+'">Spustit nedoběhlé ('+sc.pending.length+')</button>';
+
+      // Historie
+      var hist = '<div class="links">'
+        + '<a class="lnk" href="'+esc(sc.makeHistoryUrl)+'" target="_blank" rel="noopener">historie běhů ↗</a>'
+        + '<a class="lnk" href="'+esc(sc.makeEditUrl)+'" target="_blank" rel="noopener">otevřít scénář ↗</a>'
+        + '<button class="btn-link" data-toggle="'+id+'">'+(isOpen ? "▾ skrýt detail" : "▸ detail ("+sc.errors.length+" chyb, "+sc.pending.length+" nedoběhlých)")+'</button>'
+        + '</div>';
+
+      // Spuštění
+      var run = '<div class="actions">';
+      if(sc.rerun.mode === "run"){
+        run += '<button class="btn-primary" data-rerun="'+id+'">'+esc(sc.rerun.label)+'</button>';
+      } else if(sc.rerun.mode === "replay"){
+        run += '<button class="btn-primary" data-rerun="'+id+'" title="Přehraje běh z '+fmtDate(sc.rerun.timestamp)+' se stejnými vstupními daty">'+esc(sc.rerun.label)+'</button>'
+             + '<span class="small">přehraje běh z '+fmtDate(sc.rerun.timestamp)+'</span>';
+      } else {
+        run += '<span class="small">'+esc(sc.rerun.label)+'</span>';
+      }
+      run += '</div>';
+
+      html += '<tr class="main s-'+esc(sc.health.level)+'">'
+        + '<td><div class="name">'+esc(sc.name)+'</div><div class="small">ID '+id+(sc.folder ? ' · '+esc(sc.folder) : '')+(sc.scheduling ? ' · '+esc(sc.scheduling) : '')+'</div>'
+        + (sc.health.level !== "ok" ? '<div class="err-msg">'+esc(sc.health.text)+'</div>' : '')
+        + '</td>'
+        + '<td>'+active+'</td><td>'+last+'</td><td>'+runs+'</td><td>'+pend+'</td><td>'+hist+'</td><td>'+run+'</td></tr>';
+
+      if(isOpen){
+        html += '<tr class="detail"><td colspan="7">';
+        html += '<h4>Nedoběhlé běhy (čekají na spuštění)</h4>';
+        if(sc.pending.length === 0){
+          html += '<div class="small">Žádné.</div>';
+        } else {
+          html += '<table class="inner"><tr><th>Kdy</th><th>Důvod</th><th>Pokusů</th><th></th></tr>';
+          sc.pending.forEach(function(p){
+            html += '<tr><td>'+fmtDate(p.created)+'</td><td class="err-msg">'+esc(p.reason)+'</td><td>'+p.attempts+'</td>'
+              + '<td><button class="btn-primary" data-dlq="'+esc(p.dlqId)+'">Spustit</button></td></tr>';
+          });
+          html += '</table>';
+        }
+        html += '<h4>Chybové běhy za poslední '+data.daysBack+' dny</h4>';
+        if(sc.errors.length === 0){
+          html += '<div class="small">Žádné.</div>';
+        } else {
+          html += '<table class="inner"><tr><th>Kdy</th><th>Stav</th><th>Modul / chyba</th><th></th></tr>';
+          sc.errors.forEach(function(er){
+            var msg = (er.errorModule ? "["+esc(er.errorModule)+"] " : "") + esc(er.errorMessage || "");
+            var act = '<a class="lnk" href="'+esc(er.detailUrl)+'" target="_blank" rel="noopener">detail ↗</a>';
+            if(er.isReplayable) act = '<button class="btn-ghost" data-replay="'+esc(er.executionId)+'" data-scenario="'+id+'">Spustit znovu tento běh</button> ' + act;
+            html += '<tr><td>'+fmtDate(er.timestamp)+'</td><td>'+statusBadge(er.status)+'</td><td class="err-msg">'+(msg||"—")+'</td><td style="white-space:nowrap">'+act+'</td></tr>';
+          });
+          html += '</table>';
+        }
+        html += '</td></tr>';
+      }
+    });
+    html += '</tbody></table>';
+    document.getElementById("content").innerHTML = html;
+    bind();
+  }
+
+  function act(btn, label, path, body, okMsg){
+    btn.disabled = true; btn.textContent = "Spouštím…";
+    api(path, {method:"POST", body: JSON.stringify(body)})
+      .then(function(r){ notice("ok", okMsg(r)); setTimeout(load, 5000); })
+      .catch(function(e){ notice("err", "Spuštění selhalo: "+e.message); btn.disabled=false; btn.textContent=label; });
+  }
+
+  function bind(){
+    document.querySelectorAll("[data-toggle]").forEach(function(btn){
+      btn.onclick = function(){ var id = btn.getAttribute("data-toggle"); openDetails[id] = !openDetails[id]; render(); };
+    });
+    document.querySelectorAll("[data-rerun]").forEach(function(btn){
+      btn.onclick = function(){
+        if(!confirm("Opravdu spustit scénář znovu?")) return;
+        act(btn, btn.textContent, "rerun", {scenarioId: Number(btn.getAttribute("data-rerun"))},
+          function(r){ return r.mode === "run" ? "Scénář byl spuštěn." : "Poslední běh byl přehrán znovu" + (r.executionId ? " (nový běh "+r.executionId+")" : "") + "."; });
+      };
+    });
+    document.querySelectorAll("[data-replay]").forEach(function(btn){
+      btn.onclick = function(){
+        if(!confirm("Přehrát tento běh znovu se stejnými vstupními daty?")) return;
+        act(btn, btn.textContent, "replay", {scenarioId: Number(btn.getAttribute("data-scenario")), executionId: btn.getAttribute("data-replay")},
+          function(r){ return "Běh byl přehrán znovu" + (r.executionId ? " (nový běh "+r.executionId+")" : "") + "."; });
+      };
+    });
+    document.querySelectorAll("[data-dlq]").forEach(function(btn){
+      btn.onclick = function(){
+        act(btn, btn.textContent, "retry", {dlqId: btn.getAttribute("data-dlq")}, function(){ return "Nedoběhlý běh byl spuštěn."; });
+      };
+    });
+    document.querySelectorAll("[data-retryall]").forEach(function(btn){
+      btn.onclick = function(){
+        act(btn, btn.textContent, "retry-all", {scenarioId: Number(btn.getAttribute("data-retryall"))}, function(){ return "Všechny nedoběhlé běhy byly spuštěny."; });
+      };
+    });
+  }
+
+  load();
+  setInterval(load, 120000);
+})();
+</script>
+</body>
+</html>
