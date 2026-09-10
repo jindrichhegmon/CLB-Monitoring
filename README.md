@@ -76,14 +76,15 @@ Proměnná `APP_PASSWORD` z dřívější verze se už nepoužívá, lze ji smaz
 Make vrací `Access denied` (401/403) i tehdy, když je token platný, ale nemá oprávnění na danou akci.
 Řešení: v Make klikněte vlevo dole na profil → **API/MCP Access** → **Add token**, zaškrtněte scopes
 `scenarios:read`, `scenarios:write`, `scenarios:run`, `dlqs:read`, `dlqs:write`, token zkopírujte
-a v Netlify přepište hodnotu `MAKE_API_TOKEN` (Site configuration → Environment variables). Projeví se ihned.
+a v Netlify přepište hodnotu `MAKE_API_TOKEN` (Site configuration → Environment variables).
+**Pozor:** funkce načte novou hodnotu až při dalším nasazení – v Netlify Deploys → **Trigger deploy → Deploy site**, nebo jakýkoli commit do `main`.
 
 ## Nasazení
 
 1. Nahrát obsah této složky do repozitáře na GitHubu (větev `main`).
 2. V Netlify u projektu: Site configuration → Build & deploy → **Link repository**, vybrat repozitář a větev `main`.
    Build command nechat prázdný; publish directory `public` a složku funkcí bere Netlify z `netlify.toml`.
-3. Zkontrolovat, že je nastavená proměnná `MAKE_API_TOKEN` (Site configuration → Environment variables).
+3. Zkontrolovat, že je nastavená proměnná `MAKE_API_TOKEN` (Site configuration → Environment variables). Po každé změně proměnné je nutné nové nasazení (Deploys → Trigger deploy).
 4. Každá další změna v `main` se nasadí automaticky.
 
 Lokální kontrola backendu: `npm test` (nepotřebuje přístup k Make – testy běží nad falešným API).
