@@ -71,6 +71,13 @@ netlify.toml                     nastavení Netlify (publish = public, functions
 
 Proměnná `APP_PASSWORD` z dřívější verze se už nepoužívá, lze ji smazat.
 
+### Hláška „Access denied“ při zapnutí/vypnutí nebo spuštění
+
+Make vrací `Access denied` (401/403) i tehdy, když je token platný, ale nemá oprávnění na danou akci.
+Řešení: v Make klikněte vlevo dole na profil → **API/MCP Access** → **Add token**, zaškrtněte scopes
+`scenarios:read`, `scenarios:write`, `scenarios:run`, `dlqs:read`, `dlqs:write`, token zkopírujte
+a v Netlify přepište hodnotu `MAKE_API_TOKEN` (Site configuration → Environment variables). Projeví se ihned.
+
 ## Nasazení
 
 1. Nahrát obsah této složky do repozitáře na GitHubu (větev `main`).
