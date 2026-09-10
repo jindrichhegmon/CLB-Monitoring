@@ -230,8 +230,10 @@
         }
         var hist = extraHistory[id] || sc.history;
         html += '<h4>Historie běhů – posledních '+hist.length+' (celkem načteno '+Math.max(sc.historyTotal, hist.length)+')</h4>';
-        if(hist.length === 0){
-          html += '<div class="small">Žádné běhy.</div>';
+        if(sc.historyError){
+          html += '<div class="err-msg" style="color:var(--red)">Historii se nepodařilo načíst z Make: '+esc(sc.historyError)+'</div>';
+        } else if(hist.length === 0){
+          html += '<div class="small">Žádné běhy'+(sc.rawLogCount ? ' (Make vrátil '+sc.rawLogCount+' záznamů, ale žádný nevypadá jako běh – <a class="lnk" href="/api/debug?scenarioId='+id+'" target="_blank">diagnostika</a>)' : ' – Make nevrátil žádný záznam')+'.</div>';
         } else {
           html += '<table class="inner"><tr><th>Kdy</th><th>Stav</th><th>Trvání</th><th>Operací</th><th>Typ</th><th>Chyba</th><th></th></tr>';
           hist.forEach(function(ex){

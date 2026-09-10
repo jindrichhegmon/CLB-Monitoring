@@ -120,7 +120,7 @@ test("buildOverview sestaví stav, DLQ a chyby pro každý scénář", async () 
   // Autorizační hlavička – UUID token se posílá jako "Token".
   assert.ok(calls.every((c) => c.headers.authorization === `Token ${settings.token}`));
   const logsCall = calls.find((c) => c.path.endsWith("/7734429/logs"));
-  assert.equal(logsCall.query["pg[sortDir]"], "desc");
+  assert.equal(logsCall.query["pg[limit]"], "100");
 });
 
 test("buildOverview přežije výpadek jednoho volání Make", async () => {
@@ -305,4 +305,31 @@ test("HTTP: 403 z Make doplní nápovědu o oprávnění tokenu", async () => {
   const res = await handle(new Request("https://x.netlify.app/api/activate", { method: "POST", body: JSON.stringify({ scenarioId: 7734406, active: true }) }), { settings, client: createMakeClient(settings, fetchImpl) });
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /scenarios:write/);
+});
+
+test("historie: odpověď Make jako pole, číselný status jako text, debug endpoint", async () => {
+  const { fetchImpl } = fakeFetch({ ...routes, "GET /api/v2/scenarios/7734429/logs": [
+    { id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", status: "1", timestamp: iso(1) },
+    { id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", eventType: "EXECUTION_END", status: 3, timestamp: iso(2), error: { message: "x" } },
+    { id: "12345", type: "start", timestamp: iso(3) },
+  ] });
+  const client = createMakeClient(settings, fetchImpl);
+  const data = await buildOverview(client, settings, NOW);
+  assert.equal(data.scenarios[0].history.length, 2);
+  assert.equal(data.scenarios[0].history[0].status, 1);
+  assert.equal(data.scenarios[0].historyError, null);
+  assert.equal(data.scenarios[0].rawLogCount, 3);
+
+  const res = await handle(new Request("https://x.netlify.app/api/debug?scenarioId=7734429"), { settings, client });
+  const d = await res.json();
+  assert.equal(d.entries, 3);
+  assert.equal(d.recognizedAsExecutions, 2);
+  assert.equal(d.rawType, "array");
+});
+
+test("historie: chyba načtení se propíše do historyError", async () => {
+  const { fetchImpl } = fakeFetch({ ...routes, "GET /api/v2/scenarios/7734429/logs": () => new Response(JSON.stringify({ message: "Access denied" }), { status: 403 }) });
+  const data = await buildOverview(createMakeClient(settings, fetchImpl), settings, NOW);
+  assert.match(data.scenarios[0].historyError, /Access denied/);
+  assert.equal(data.scenarios[0].history.length, 0);
 });

@@ -82,9 +82,10 @@ export function createMakeClient(settings, fetchImpl = globalThis.fetch) {
   return {
     getScenario: (scenarioId) => call(`/scenarios/${scenarioId}`).then((r) => r.scenario),
     listExecutions: (scenarioId, limit = 100) =>
-      call(`/scenarios/${scenarioId}/logs`, {
-        query: { "pg[limit]": limit, "pg[sortDir]": "desc", "pg[sortBy]": "timestamp" },
-      }).then((r) => r.scenarioLogs || []),
+      call(`/scenarios/${scenarioId}/logs`, { query: { "pg[limit]": limit } })
+        .then((r) => (Array.isArray(r?.scenarioLogs) ? r.scenarioLogs : Array.isArray(r) ? r : [])),
+    // surová odpověď pro diagnostiku
+    rawExecutions: (scenarioId, limit = 5) => call(`/scenarios/${scenarioId}/logs`, { query: { "pg[limit]": limit } }),
     listIncomplete: (scenarioId) =>
       call(`/dlqs`, { query: { scenarioId, "pg[limit]": 100 } }).then((r) => r.dlqs || []),
     retryIncomplete: (dlqId) => call(`/dlqs/${encodeURIComponent(dlqId)}/retry`, { method: "POST" }),
@@ -113,8 +114,12 @@ function makeUrls(settings, scenarioId) {
 }
 
 function isExecution(log) {
-  // Historie obsahuje i události typu start/stop/modify/warning bez stavu běhu.
-  return log && typeof log.status === "number" && typeof log.id === "string" && log.id.length >= 16;
+  // Historie obsahuje i události typu start/stop/modify/warning bez stavu běhu – ty vynecháme.
+  if (!log || typeof log !== "object") return false;
+  if (log.eventType === "EXECUTION_END") return true;
+  if (["start", "stop", "modify", "warning", "error"].includes(log.type) && log.status === undefined) return false;
+  const st = Number(log.status);
+  return Number.isFinite(st) && st >= 0 && log.id != null && String(log.id).length >= 16;
 }
 
 export function mapExecution(ex, urls) {
@@ -122,7 +127,7 @@ export function mapExecution(ex, urls) {
     executionId: ex.id,
     canReplay: ex.isReplayable !== false,
     timestamp: ex.timestamp,
-    status: ex.status,
+    status: Number(ex.status),
     duration: ex.duration ?? null,
     operations: ex.operations ?? null,
     type: ex.type || "",
@@ -189,6 +194,8 @@ export async function buildOverview(client, settings, now = Date.now()) {
       const problems = [];
       const scenario = scenarioRes.status === "fulfilled" ? scenarioRes.value : (problems.push(scenarioRes.reason.message), null);
       const logs = logsRes.status === "fulfilled" ? logsRes.value : (problems.push(logsRes.reason.message), []);
+      const historyError = logsRes.status === "rejected" ? logsRes.reason.message : null;
+      const rawLogCount = logs.length;
       const dlqs = dlqRes.status === "fulfilled" ? dlqRes.value : (problems.push(dlqRes.reason.message), []);
 
       const executions = logs.filter(isExecution).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -239,6 +246,8 @@ export async function buildOverview(client, settings, now = Date.now()) {
         errors: inPeriod.filter((ex) => ex.status !== STATUS_OK).map((ex) => mapExecution(ex, urls)),
         history: executions.slice(0, HISTORY_IN_OVERVIEW).map((ex) => mapExecution(ex, urls)),
         historyTotal: executions.length,
+        historyError,
+        rawLogCount,
       };
     })
   );
@@ -267,6 +276,24 @@ export async function handle(req, { settings = getSettings(), client = createMak
   try {
     if (method === "GET" && (route === "overview" || route === "errors")) {
       return json(200, await buildOverview(client, settings));
+    }
+
+    if (method === "GET" && route === "debug") {
+      const scenarioId = Number(url.searchParams.get("scenarioId")) || settings.scenarios[0]?.id;
+      const out = { scenarioId, zone: settings.zone, tokenSet: !!settings.token, tokenLooksLikeApiKey: /^[0-9a-f-]{36}$/i.test(settings.token) };
+      try {
+        const raw = await client.rawExecutions(scenarioId, 5);
+        out.rawType = Array.isArray(raw) ? "array" : typeof raw;
+        out.rawKeys = raw && typeof raw === "object" ? Object.keys(raw) : null;
+        const arr = Array.isArray(raw?.scenarioLogs) ? raw.scenarioLogs : Array.isArray(raw) ? raw : [];
+        out.entries = arr.length;
+        out.sample = arr.slice(0, 3);
+        out.recognizedAsExecutions = arr.filter(isExecution).length;
+      } catch (err) {
+        out.error = err.message;
+        out.status = err.status || null;
+      }
+      return json(200, out);
     }
 
     if (method === "GET" && route === "history") {
