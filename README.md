@@ -10,7 +10,7 @@ a tlačítka pro **opětovné spuštění** – vše bez přihlašování.
 
 ## Sledované scénáře
 
-Seznam je v `netlify/functions/scenarios.mjs` (pořadí = pořadí řádků v tabulce):
+Seznam je v `netlify/lib/scenarios.mjs` (pořadí = pořadí řádků v tabulce):
 
 | ID scénáře | Scénář |
 |-----------:|--------|
@@ -41,7 +41,7 @@ Seznam jde přepsat i bez zásahu do kódu proměnnou prostředí `MAKE_SCENARIO
 ```
 public/                          statické soubory webu (index.html, ikony)
 netlify/functions/api.mjs        backend – Netlify Function obsluhující /api/*
-netlify/functions/scenarios.mjs  seznam sledovaných scénářů
+netlify/lib/scenarios.mjs  seznam sledovaných scénářů
 test/api.test.mjs                testy backendu nad falešným Make API (npm test)
 netlify.toml                     nastavení Netlify (publish = public, functions = netlify/functions)
 ```

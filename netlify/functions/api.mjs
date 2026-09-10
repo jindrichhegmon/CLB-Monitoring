@@ -16,9 +16,9 @@
 //   MAKE_ZONE        – zóna Make, výchozí eu2.make.com
 //   MAKE_TEAM_ID     – ID týmu (pro odkazy do Make), výchozí 1179427
 //   DAYS_BACK        – kolik dní historie chyb zobrazit, výchozí 3
-//   MAKE_SCENARIOS   – volitelně JSON pole [{"id":123,"name":"…"}], které nahradí seznam v scenarios.mjs
+//   MAKE_SCENARIOS   – volitelně JSON pole [{"id":123,"name":"…"}], které nahradí seznam v netlify/lib/scenarios.mjs
 
-import { SCENARIOS as DEFAULT_SCENARIOS } from "./scenarios.mjs";
+import { SCENARIOS as DEFAULT_SCENARIOS } from "../lib/scenarios.mjs";
 
 export const config = { path: "/api/*" };
 
