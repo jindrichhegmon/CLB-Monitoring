@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a6fc9"/>
+      <stop offset="1" stop-color="#123f78"/>
+    </linearGradient>
+  </defs>
+  <!-- pozadí: zaoblený čtverec -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <!-- kruhová šipka (spustit znovu) -->
+  <g fill="none" stroke="#ffffff" stroke-width="46" stroke-linecap="round">
+    <path d="M 359 166 A 132 132 0 1 0 388 256"/>
+  </g>
+  <!-- hrot šipky -->
+  <path d="M 322 108 L 402 188 L 292 202 Z" fill="#ffffff"/>
+  <!-- výstražný trojúhelník -->
+  <g transform="translate(256 268)">
+    <path d="M 0 -74 L 66 46 Q 74 62 56 62 L -56 62 Q -74 62 -66 46 Z" fill="#f5a623" stroke="#123f78" stroke-width="14" stroke-linejoin="round"/>
+    <rect x="-9" y="-38" width="18" height="52" rx="9" fill="#123f78"/>
+    <circle cx="0" cy="36" r="11" fill="#123f78"/>
+  </g>
+</svg>

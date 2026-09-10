@@ -1,0 +1,12 @@
+{
+  "name": "makechybypm103adiktovani",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Přehled chybových běhů scénářů Make (DIKTOVANI, PM103, ADRESY, MEDISTAR) s možností opakovaného spuštění",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
