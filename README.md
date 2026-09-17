@@ -18,6 +18,7 @@ Seznam je v `netlify/lib/scenarios.mjs` (pořadí = pořadí řádků v tabulce)
 | 6231864 | 2. PM103 JOTFORM |
 | 7734429 | B1. Načtení ADRES po importu z Excelu a úprava adres – AKTUÁLNÍ SCÉNÁŘ (diakritika atd.) |
 | 7734406 | A. MEDISTAR – Načtení dat po importu z Excelu do PacientiVykony a spuštění statistik |
+| 7734951 | B. MEDISTAR – Úprava a doplnění tabulek a načtení SQLPACIENTIRUN do ArchivPacientiVykony + spuštění statistik |
 | 4825799 | MEDISTAR-STATISTIKY – kompletní tabulky do Modré hlavy (on-demand, tlačítko „Spustit scénář“) |
 
 Přidání dalšího scénáře: doplnit řádek `{ id: <ID>, name: "<název>" }` (ID je v Make v adrese scénáře).

@@ -73,6 +73,7 @@ test("getSettings používá výchozí seznam scénářů a umí ho přepsat z p
   const ids = def.scenarios.map((s) => s.id);
   assert.ok(ids.includes(7734429), "obsahuje B1 Načtení ADRES");
   assert.ok(ids.includes(7734406), "obsahuje A.MEDISTAR PacientiVykony");
+  assert.ok(ids.includes(7734951), "obsahuje B.MEDISTAR SQLPACIENTIRUN do ArchivPacientiVykony");
   assert.ok(ids.includes(5082766) && ids.includes(6231864), "obsahuje DIKTOVANI a PM103");
 
   const custom = getSettings({ MAKE_TOKEN: "t", MAKE_SCENARIOS: '[{"id":1,"name":"x"}]', DAYS_BACK: "7" });
