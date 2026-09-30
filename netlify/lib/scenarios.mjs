@@ -20,4 +20,5 @@ export const SCENARIOS = [
     name: "B. MEDISTAR – Úprava a doplnění tabulek a načtení SQLPACIENTIRUN do ArchivPacientiVykony + spuštění statistik",
   },
   { id: 4825799, name: "MEDISTAR-STATISTIKY – kompletní tabulky do Modré hlavy" },
+  { id: 8879527, name: "Zadost o přijetí do hospice + Telefon a SMS FAMICURA" },
 ];
