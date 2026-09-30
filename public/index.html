@@ -46,6 +46,9 @@
   .btn-ghost{background:transparent;color:var(--blue);border:1px solid var(--blue)}
   .btn-warn{background:var(--amber);color:#fff}
   .btn-refresh{background:#fff;border:1px solid var(--border);color:var(--text)}
+  .btn-ok{background:var(--green);color:#fff}
+  .resolved{margin-top:6px;font-size:12px;color:var(--green)}
+  .resolved .note{color:var(--muted);overflow-wrap:anywhere}
   .btn-link{background:transparent;color:var(--blue);padding:2px 4px;font-size:12px;text-decoration:underline}
   .actions{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
   a.lnk{color:var(--blue);text-decoration:none;font-size:12.5px;white-space:nowrap}
@@ -91,6 +94,7 @@
     <b>Spustit znovu</b> = on-demand scénář se spustí; scénář s webhookem se přehraje se stejnými vstupními daty jako poslední běh (celý od začátku). Když poslední běh přehrát nejde, zkusí se starší.
     <b>▸ Zobrazit historii</b> rozbalí posledních 20 běhů přímo tady (bez přihlášení do Make) – u každého lze zobrazit, co se v běhu stalo („co se stalo“), a spustit právě ten běh znovu.
     Sloupec „Běhy za <span id="daysBack">3</span> dny“ počítá běhy v tomto období.
+    <b>✓ Označit jako vyřešené</b> = problém jste vyřešili, ale Make stav nevymaže: chyby, varování a nedoběhlé běhy vzniklé do okamžiku označení se přestanou počítat jako problém (v historii zůstanou se štítkem „vyřešeno“). Nová chyba po označení se znovu ukáže. Označení lze zrušit.
   </footer>
 </div>
 
@@ -155,11 +159,12 @@
   function render(){
     var data = DATA;
     document.getElementById("meta").textContent =
-      "Chyby za poslední " + data.daysBack + " dny · aktualizováno " + fmtDate(data.generatedAt);
+      "Chyby za poslední " + data.daysBack + " dny · aktualizováno " + fmtDate(data.generatedAt)
+      + (data.marksError ? " · ruční označení „vyřešeno“ se nepodařilo načíst: " + data.marksError : "");
     document.getElementById("daysBack").textContent = data.daysBack;
 
     var counts = {ok:0, warn:0, error:0}, pendingTotal = 0;
-    data.scenarios.forEach(function(sc){ counts[sc.health.level] = (counts[sc.health.level]||0) + 1; pendingTotal += sc.pending.length; });
+    data.scenarios.forEach(function(sc){ counts[sc.health.level] = (counts[sc.health.level]||0) + 1; pendingTotal += sc.openPending; });
     document.getElementById("summary").innerHTML =
       '<span class="chip c-ok">✓ v pořádku: '+counts.ok+'</span>'
       + '<span class="chip c-warn">! pozor: '+counts.warn+'</span>'
@@ -183,25 +188,27 @@
 
       // Poslední běh
       var last = sc.lastRun
-        ? statusBadge(sc.lastRun.status) + '<div class="small">'+fmtDate(sc.lastRun.timestamp)
+        ? statusBadge(sc.lastRun.status) + (sc.lastRun.resolved ? ' <span class="badge b-muted">vyřešeno</span>' : '') + '<div class="small">'+fmtDate(sc.lastRun.timestamp)
           + ' · <a class="lnk" href="'+esc(sc.lastRun.detailUrl)+'" target="_blank" rel="noopener">detail ↗</a></div>'
           + (sc.lastRun.errorMessage ? '<div class="err-msg">'+esc(sc.lastRun.errorMessage)+'</div>' : '')
         : '<span class="badge b-muted">žádný</span>';
 
       // Běhy za období
+      var failed = sc.runsInPeriod - sc.okInPeriod, solved = sc.errors.length - sc.openErrors;
       var runs = sc.runsInPeriod + ' celkem'
-        + '<div class="small">'+sc.okInPeriod+' OK · '+(sc.runsInPeriod - sc.okInPeriod)+' s chybou</div>';
+        + '<div class="small">'+sc.okInPeriod+' OK · '+failed+' s chybou'+(solved ? ' (z toho '+solved+' vyřešeno)' : '')+'</div>';
 
       // Nedoběhlé
       var pend = sc.pending.length === 0
         ? '<span class="badge b-ok">0</span>'
-        : '<span class="badge b-warn">'+sc.pending.length+'</span> '
-          + '<button class="btn-warn" data-retryall="'+id+'">Spustit nedoběhlé ('+sc.pending.length+')</button>';
+        : (sc.openPending ? '<span class="badge b-warn">'+sc.openPending+'</span> ' : '')
+          + (sc.pending.length > sc.openPending ? '<span class="badge b-muted">'+(sc.pending.length - sc.openPending)+' vyřešeno</span> ' : '')
+          + '<button class="'+(sc.openPending ? 'btn-warn' : 'btn-ghost btn-sm')+'" data-retryall="'+id+'">Spustit nedoběhlé ('+sc.pending.length+')</button>';
 
       // Historie – tlačítko rozbalí historii přímo tady; odkazy do Make jsou jen doplněk
       var hist = '<div class="links">'
         + '<button class="'+(isOpen ? 'btn-primary' : 'btn-ghost')+'" data-toggle="'+id+'">'+(isOpen ? "▾ Skrýt historii" : "▸ Zobrazit historii ("+sc.history.length+" běhů)")+'</button>'
-        + '<span class="small">'+sc.errors.length+' chyb za '+data.daysBack+' dny · '+sc.pending.length+' nedoběhlých</span>'
+        + '<span class="small">'+sc.openErrors+' chyb za '+data.daysBack+' dny · '+sc.openPending+' nedoběhlých</span>'
         + '<span class="small"><a class="lnk" href="'+esc(sc.makeHistoryUrl)+'" target="_blank" rel="noopener">v Make ↗</a> · <a class="lnk" href="'+esc(sc.makeEditUrl)+'" target="_blank" rel="noopener">scénář v Make ↗</a></span>'
         + '</div>';
 
@@ -212,6 +219,12 @@
       html += '<tr class="main s-'+esc(sc.health.level)+'">'
         + '<td><div class="name">'+esc(sc.name)+'</div><div class="small">ID '+id+(sc.folder ? ' · '+esc(sc.folder) : '')+(sc.scheduling ? ' · '+esc(sc.scheduling) : '')+'</div>'
         + (sc.health.level !== "ok" ? '<div class="err-msg">'+esc(sc.health.text)+'</div>' : '')
+        + (sc.mark
+          ? '<div class="resolved">✓ vyřešeno ručně '+fmtDate(sc.mark.resolvedAt)
+            + (sc.mark.note ? ' · <span class="note">'+esc(sc.mark.note)+'</span>' : '')
+            + ' <button class="btn-link" data-unresolve="'+id+'">zrušit</button></div>'
+          : '')
+        + (sc.health.level !== "ok" ? '<div style="margin-top:6px"><button class="btn-ok btn-sm" data-resolve="'+id+'">✓ Označit jako vyřešené</button></div>' : '')
         + '</td>'
         + '<td>'+active+'</td><td>'+last+'</td><td>'+runs+'</td><td>'+pend+'</td><td>'+hist+'</td><td>'+run+'</td></tr>';
 
@@ -223,7 +236,7 @@
         } else {
           html += '<table class="inner"><tr><th>Kdy</th><th>Důvod</th><th>Pokusů</th><th></th></tr>';
           sc.pending.forEach(function(p){
-            html += '<tr><td>'+fmtDate(p.created)+'</td><td class="err-msg">'+esc(p.reason)+'</td><td>'+p.attempts+'</td>'
+            html += '<tr><td>'+fmtDate(p.created)+(p.resolved ? ' <span class="badge b-muted">vyřešeno</span>' : '')+'</td><td class="err-msg">'+esc(p.reason)+'</td><td>'+p.attempts+'</td>'
               + '<td><button class="btn-primary" data-dlq="'+esc(p.dlqId)+'">Spustit</button></td></tr>';
           });
           html += '</table>';
@@ -244,7 +257,7 @@
             act += '<a class="lnk" href="'+esc(ex.detailUrl)+'" target="_blank" rel="noopener">v Make ↗</a></div>';
             var typ = ex.type === "manual" ? "ručně" : ex.type === "auto" ? "automaticky" : esc(ex.type||"");
             if(ex.replayOf) typ += " (přehrání)";
-            html += '<tr><td style="white-space:nowrap">'+fmtDate(ex.timestamp)+'</td><td>'+statusBadge(ex.status)+'</td>'
+            html += '<tr><td style="white-space:nowrap">'+fmtDate(ex.timestamp)+'</td><td>'+statusBadge(ex.status)+(ex.resolved ? ' <span class="badge b-muted">vyřešeno</span>' : '')+'</td>'
               + '<td>'+(ex.duration != null ? fmtDur(ex.duration) : "")+'</td><td>'+(ex.operations != null ? ex.operations : "")+'</td>'
               + '<td class="small">'+typ+'</td><td class="err-msg">'+(msg||"—")+'</td><td>'+act+'</td></tr>';
             if(exDetails[ex.executionId]){
@@ -293,6 +306,25 @@
         if(!on && !confirm("Opravdu vypnout scénář v Make? Přestane reagovat na webhook / plán.")) return;
         act(btn, btn.textContent, "activate", {scenarioId: Number(btn.getAttribute("data-activate")), active: on},
           function(r){ return r.isActive ? "Scénář je zapnutý (aktivní)." : "Scénář je vypnutý."; });
+      };
+    });
+    document.querySelectorAll("[data-resolve]").forEach(function(btn){
+      btn.onclick = function(){
+        var note = prompt("Označit problémy tohoto scénáře jako vyřešené?\nChyby a nedoběhlé běhy do této chvíle se přestanou počítat; nová chyba se znovu ukáže.\n\nPoznámka (nepovinná) – co jste udělali:", "");
+        if(note === null) return;
+        btn.disabled = true; btn.textContent = "Ukládám…";
+        api("resolve", {method:"POST", body: JSON.stringify({scenarioId: Number(btn.getAttribute("data-resolve")), note: note})})
+          .then(function(){ notice("ok", "Označeno jako vyřešené."); load(); })
+          .catch(function(e){ notice("err", "Označení se nepodařilo uložit: "+e.message); btn.disabled=false; btn.textContent="✓ Označit jako vyřešené"; });
+      };
+    });
+    document.querySelectorAll("[data-unresolve]").forEach(function(btn){
+      btn.onclick = function(){
+        if(!confirm("Zrušit ruční označení „vyřešeno“? Staré chyby se znovu začnou počítat.")) return;
+        btn.disabled = true;
+        api("unresolve", {method:"POST", body: JSON.stringify({scenarioId: Number(btn.getAttribute("data-unresolve"))})})
+          .then(function(){ notice("ok", "Označení bylo zrušeno."); load(); })
+          .catch(function(e){ notice("err", "Zrušení se nepodařilo: "+e.message); btn.disabled=false; });
       };
     });
     document.querySelectorAll("[data-more]").forEach(function(btn){

@@ -11,6 +11,11 @@
 //   POST /api/retry      {dlqId}           spustit jeden nedoběhlý běh (pokračuje od modulu, kde spadl)
 //   POST /api/retry-all  {scenarioId}      spustit všechny nedoběhlé běhy scénáře
 //   POST /api/activate   {scenarioId, active: true|false}   zapnout / vypnout scénář v Make
+//   POST /api/resolve    {scenarioId, note?}   ručně označit problémy scénáře jako vyřešené (do teď)
+//   POST /api/unresolve  {scenarioId}      zrušit ruční označení
+//
+// Ruční označení „vyřešeno“ se ukládá do Netlify Blobs (úložiště „vyreseno“). Skryje chyby, varování
+// a nedoběhlé běhy vzniklé do okamžiku označení; cokoli nového po označení se znovu ukáže jako problém.
 //
 // Konfigurace (proměnné prostředí v Netlify):
 //   MAKE_API_TOKEN   – API token Make (alternativně MAKE_TOKEN nebo MAKE_API_KEY) – povinné
@@ -19,6 +24,7 @@
 //   DAYS_BACK        – kolik dní historie chyb zobrazit, výchozí 3
 //   MAKE_SCENARIOS   – volitelně JSON pole [{"id":123,"name":"…"}], které nahradí seznam v netlify/lib/scenarios.mjs
 
+import { getStore } from "@netlify/blobs";
 import { SCENARIOS as DEFAULT_SCENARIOS } from "../lib/scenarios.mjs";
 
 export const config = { path: "/api/*" };
@@ -137,6 +143,41 @@ export function createMakeClient(settings, fetchImpl = globalThis.fetch) {
   };
 }
 
+// ---------- Ruční označení „vyřešeno“ ----------
+
+const MARKS_KEY = "marks";
+
+/** Úložiště značek {scenarioId: {resolvedAt, note}} v Netlify Blobs. */
+export function createMarkStore(storeImpl) {
+  let store = storeImpl || null;
+  const blob = () => (store ||= getStore({ name: "vyreseno", consistency: "strong" }));
+  return {
+    async getAll() {
+      const v = await blob().get(MARKS_KEY, { type: "json" });
+      return v && typeof v === "object" ? v : {};
+    },
+    async set(scenarioId, mark) {
+      const all = await this.getAll();
+      if (mark) all[scenarioId] = mark; else delete all[scenarioId];
+      await blob().setJSON(MARKS_KEY, all);
+      return all;
+    },
+  };
+}
+
+/** Úložiště v paměti (testy, lokální běh). */
+export function memoryMarkStore(initial = {}) {
+  const data = { [MARKS_KEY]: initial };
+  return createMarkStore({
+    get: async (k) => (data[k] === undefined ? null : JSON.parse(JSON.stringify(data[k]))),
+    setJSON: async (k, v) => { data[k] = JSON.parse(JSON.stringify(v)); },
+  });
+}
+
+const ts = (v) => (v ? new Date(v).getTime() : NaN);
+/** Vznikl záznam (běh, nedoběhlý běh) nejpozději v okamžiku ručního označení? */
+const coveredBy = (mark, time) => !!mark && ts(time) <= ts(mark.resolvedAt);
+
 // ---------- Sestavení přehledu ----------
 
 function makeUrls(settings, scenarioId) {
@@ -157,8 +198,9 @@ function isExecution(log) {
   return Number.isFinite(st) && st >= 0 && log.id != null && String(log.id).length >= 16;
 }
 
-export function mapExecution(ex, urls) {
+export function mapExecution(ex, urls, mark = null) {
   return {
+    resolved: Number(ex.status) !== STATUS_OK && coveredBy(mark, ex.timestamp),
     executionId: ex.id,
     canReplay: ex.isReplayable !== false,
     timestamp: ex.timestamp,
@@ -177,7 +219,7 @@ export function mapExecution(ex, urls) {
 const HISTORY_IN_OVERVIEW = 20;
 
 /** Souhrnný stav řádku: ok | warn | error + krátký text. */
-export function evaluateHealth({ scenario, executions, pending, daysBack, now = Date.now() }) {
+export function evaluateHealth({ scenario, executions, pending, daysBack, now = Date.now(), mark = null }) {
   const reasons = [];
   let level = "ok";
   const bump = (l) => { if (l === "error" || (l === "warn" && level === "ok")) level = l; };
@@ -189,37 +231,44 @@ export function evaluateHealth({ scenario, executions, pending, daysBack, now = 
   }
 
   const last = executions[0];
+  const lastCovered = last && coveredBy(mark, last.timestamp);
+  // Ruční označení platí jako „zkontrolováno“ i pro hlídání stáří posledního běhu po dobu daysBack.
+  const markFresh = !!mark && now - ts(mark.resolvedAt) <= daysBack * 86400000;
   if (!last) {
     bump("warn");
     reasons.push("v historii není žádný běh");
   } else {
-    if (last.status === STATUS_ERROR) {
+    if (lastCovered) {
+      // chyba / varování posledního běhu je ručně označená jako vyřešená
+    } else if (last.status === STATUS_ERROR) {
       bump("error");
       reasons.push("poslední běh skončil chybou" + (last.error?.message ? `: ${last.error.message}` : ""));
     } else if (last.status === STATUS_WARNING) {
       bump("warn");
       reasons.push("poslední běh skončil s varováním");
     }
-    if (now - new Date(last.timestamp).getTime() > daysBack * 86400000) {
+    if (now - new Date(last.timestamp).getTime() > daysBack * 86400000 && !markFresh) {
       bump("warn");
       reasons.push(`poslední běh je starší než ${daysBack} dny`);
     }
   }
 
-  if (pending.length) {
+  const openPending = pending.filter((p) => !coveredBy(mark, p.created));
+  if (openPending.length) {
     bump("warn");
-    reasons.push(`${pending.length}× nedoběhlý běh čeká na spuštění`);
+    reasons.push(`${openPending.length}× nedoběhlý běh čeká na spuštění`);
   }
 
   return { level, text: reasons.length ? reasons.join("; ") : "v pořádku" };
 }
 
-export async function buildOverview(client, settings, now = Date.now()) {
+export async function buildOverview(client, settings, now = Date.now(), marks = {}) {
   const since = now - settings.daysBack * 86400000;
 
   const scenarios = await Promise.all(
     settings.scenarios.map(async (sc) => {
       const urls = makeUrls(settings, sc.id);
+      const mark = marks[sc.id] || marks[String(sc.id)] || null;
       const [scenarioRes, logsRes, dlqRes] = await Promise.allSettled([
         client.getScenario(sc.id),
         client.listExecutions(sc.id),
@@ -244,9 +293,10 @@ export async function buildOverview(client, settings, now = Date.now()) {
           reason: d.reason || "",
           attempts: d.attempts ?? 0,
           executionId: d.executionId || null,
+          resolved: coveredBy(mark, d.created),
         }));
 
-      const health = evaluateHealth({ scenario, executions, pending, daysBack: settings.daysBack, now });
+      const health = evaluateHealth({ scenario, executions, pending, daysBack: settings.daysBack, now, mark });
       if (problems.length) {
         if (health.level === "ok") health.level = "warn";
         health.text += `; nepodařilo se načíst: ${problems.join(" | ")}`;
@@ -278,8 +328,11 @@ export async function buildOverview(client, settings, now = Date.now()) {
         okInPeriod: inPeriod.filter((ex) => ex.status === STATUS_OK).length,
         rerun,
         pending,
-        errors: inPeriod.filter((ex) => ex.status !== STATUS_OK).map((ex) => mapExecution(ex, urls)),
-        history: executions.slice(0, HISTORY_IN_OVERVIEW).map((ex) => mapExecution(ex, urls)),
+        errors: inPeriod.filter((ex) => ex.status !== STATUS_OK).map((ex) => mapExecution(ex, urls, mark)),
+        openErrors: inPeriod.filter((ex) => ex.status !== STATUS_OK && !coveredBy(mark, ex.timestamp)).length,
+        openPending: pending.filter((p) => !p.resolved).length,
+        mark,
+        history: executions.slice(0, HISTORY_IN_OVERVIEW).map((ex) => mapExecution(ex, urls, mark)),
         historyTotal: executions.length,
         historyError,
         rawLogCount,
@@ -288,6 +341,15 @@ export async function buildOverview(client, settings, now = Date.now()) {
   );
 
   return { generatedAt: new Date(now).toISOString(), daysBack: settings.daysBack, scenarios };
+}
+
+async function readMarks(markStore) {
+  try {
+    return { marks: await markStore.getAll(), marksError: null };
+  } catch (err) {
+    console.warn("Ruční označení se nepodařilo načíst:", err.message);
+    return { marks: {}, marksError: err.message };
+  }
 }
 
 // ---------- HTTP obsluha ----------
@@ -303,14 +365,17 @@ async function readJson(req) {
   try { return await req.json(); } catch { return {}; }
 }
 
-export async function handle(req, { settings = getSettings(), client = createMakeClient(settings) } = {}) {
+export async function handle(req, { settings = getSettings(), client = createMakeClient(settings), markStore = createMarkStore(), now } = {}) {
   const url = new URL(req.url);
   const route = url.pathname.replace(/^\/api\/?/, "").replace(/\/+$/, "");
   const method = req.method.toUpperCase();
 
   try {
     if (method === "GET" && (route === "overview" || route === "errors")) {
-      return json(200, await buildOverview(client, settings));
+      const { marks, marksError } = await readMarks(markStore);
+      const overview = await buildOverview(client, settings, now ?? Date.now(), marks);
+      if (marksError) overview.marksError = marksError;
+      return json(200, overview);
     }
 
     if (method === "GET" && route === "debug") {
@@ -388,6 +453,17 @@ export async function handle(req, { settings = getSettings(), client = createMak
       const id = Number(scenarioId);
       const scenario = active === false ? await client.deactivateScenario(id) : await client.activateScenario(id);
       return json(200, { ok: true, isActive: scenario ? scenario.isActive === true : active !== false });
+    }
+
+    if (method === "POST" && (route === "resolve" || route === "unresolve")) {
+      const { scenarioId, note } = await readJson(req);
+      const id = Number(scenarioId);
+      if (!id || !settings.scenarios.some((sc) => Number(sc.id) === id)) return json(400, { error: "Neznámý nebo chybějící scenarioId." });
+      const mark = route === "resolve"
+        ? { resolvedAt: new Date(now ?? Date.now()).toISOString(), note: String(note || "").trim().slice(0, 300) }
+        : null;
+      await markStore.set(id, mark);
+      return json(200, { ok: true, scenarioId: id, mark });
     }
 
     if (method === "POST" && route === "replay") {

@@ -37,6 +37,7 @@ Seznam jde přepsat i bez zásahu do kódu proměnnou prostředí `MAKE_SCENARIO
 | Nedoběhlé | počet neúplných běhů (DLQ) a tlačítko **Spustit nedoběhlé** – dokončí je od modulu, kde spadly |
 | Historie běhů | **▸ Zobrazit historii** rozbalí přímo v aplikaci nedoběhlé běhy a posledních 20 běhů; odkazy do Make jsou jen doplněk. Rozbalí která rozbalí přímo v aplikaci nedoběhlé běhy a posledních 20 běhů (stav, trvání, operace, chyba). U každého běhu: **co se stalo** (detail běhu z Make bez přihlášení), **Spustit znovu**, odkaz do Make. Tlačítko „Načíst starší běhy“ dotáhne až 100 běhů. |
 | Spustit znovu | **Spustit scénář** (on-demand scénář) nebo **Spustit znovu** (scénář s webhookem – přehrání posledního běhu se stejnými vstupními daty; když nejde, zkusí se starší běh a nakonec běžné spuštění) |
+| ✓ Označit jako vyřešené | u scénáře s problémem (v prvním sloupci) – ruční označení, když je problém vyřešený, ale Make stav nevymaže. Chyby, varování a nedoběhlé běhy vzniklé **do okamžiku označení** se přestanou počítat (v historii mají štítek „vyřešeno“), nová chyba po označení se znovu ukáže. Lze přidat poznámku a označení **zrušit**. Ukládá se do Netlify Blobs (úložiště `vyreseno`). |
 
 ## Struktura
 
@@ -60,6 +61,8 @@ netlify.toml                     nastavení Netlify (publish = public, functions
 | `POST /api/retry` | `{"dlqId": "…"}` | spustit jeden nedoběhlý běh (`POST /dlqs/{id}/retry`) |
 | `POST /api/retry-all` | `{"scenarioId": 123}` | spustit všechny nedoběhlé běhy scénáře (`POST /dlqs/retry?scenarioId=…`) |
 | `POST /api/activate` | `{"scenarioId": 123, "active": true}` | zapnout (`POST /scenarios/{id}/start`) nebo vypnout (`/stop`) scénář |
+| `POST /api/resolve` | `{"scenarioId": 123, "note": "…"}` | ručně označit problémy scénáře jako vyřešené k tomuto okamžiku |
+| `POST /api/unresolve` | `{"scenarioId": 123}` | zrušit ruční označení |
 
 ## Nastavení v Netlify (proměnné prostředí)
 
