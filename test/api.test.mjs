@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildOverview, createMakeClient, evaluateHealth, getSettings, handle } from "../netlify/functions/api.mjs";
+import { buildOverview, createMakeClient, evaluateHealth, getSettings, handle, memoryMarkStore } from "../netlify/functions/api.mjs";
 
 const NOW = Date.parse("2026-09-10T10:00:00Z");
 const HOUR = 3600000;
@@ -173,7 +173,7 @@ test("HTTP: retry, retry-all a replay volají správné endpointy Make", async (
   res = await handle(new Request("https://x.netlify.app/api/neznama"), opts);
   assert.equal(res.status, 404);
 
-  res = await handle(new Request("https://x.netlify.app/api/overview"), opts);
+  res = await handle(new Request("https://x.netlify.app/api/overview"), { ...opts, now: NOW });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.scenarios.length, 2);
@@ -361,4 +361,66 @@ test("chyba Make s detail/suberrors se vypíše celá", async () => {
   const data = await buildOverview(createMakeClient(settings, fetchImpl), settings, NOW);
   assert.match(data.scenarios[0].historyError, /Validation failed/);
   assert.match(data.scenarios[0].historyError, /Invalid value for pg\[limit\]/);
+});
+
+test("ruční označení „vyřešeno“ skryje staré problémy, nové po označení znovu ukáže", async () => {
+  const { fetchImpl } = fakeFetch(routes);
+  const client = createMakeClient(settings, fetchImpl);
+  const markStore = memoryMarkStore();
+  const post = (route, body, now = NOW) =>
+    handle(new Request(`https://x.netlify.app/api/${route}`, { method: "POST", body: JSON.stringify(body) }), { settings, client, markStore, now });
+  const overview = async (now = NOW) =>
+    (await (await handle(new Request("https://x.netlify.app/api/overview"), { settings, client, markStore, now })).json()).scenarios;
+
+  // A. MEDISTAR: poslední běh chybou + 1 nedoběhlý běh + vypnutý scénář
+  let med = (await overview())[1];
+  assert.equal(med.health.level, "error");
+  assert.equal(med.mark, null);
+  assert.equal(med.openErrors, 1);
+  assert.equal(med.openPending, 1);
+
+  let res = await post("resolve", { scenarioId: 7734406, note: "opraveno ručně v SQL" });
+  assert.equal(res.status, 200);
+  const r = await res.json();
+  assert.equal(r.mark.resolvedAt, new Date(NOW).toISOString());
+  assert.equal(r.mark.note, "opraveno ručně v SQL");
+
+  med = (await overview())[1];
+  assert.equal(med.mark.note, "opraveno ručně v SQL");
+  assert.equal(med.openErrors, 0, "chyba před označením se nepočítá");
+  assert.equal(med.openPending, 0, "nedoběhlý běh před označením se nepočítá");
+  assert.equal(med.pending[0].resolved, true);
+  assert.equal(med.history[0].resolved, true, "chybový běh je v historii označený jako vyřešený");
+  assert.equal(med.history[1].resolved, false, "OK běh se neoznačuje");
+  assert.equal(med.health.text, "scénář je vypnutý", "vypnutý scénář se ručním označením neskryje");
+
+  // Nová chyba po označení se znovu ukáže.
+  const later = evaluateHealth({ scenario: { isActive: true }, executions: [{ status: 3, timestamp: iso(-1), error: { message: "nová" } }], pending: [], daysBack: 3, now: NOW + 2 * HOUR, mark: r.mark });
+  assert.equal(later.level, "error");
+  const covered = evaluateHealth({ scenario: { isActive: true }, executions: [{ status: 3, timestamp: iso(1) }], pending: [{ created: iso(2) }], daysBack: 3, now: NOW, mark: r.mark });
+  assert.equal(covered.level, "ok");
+  // Stáří posledního běhu označení skryje jen na daysBack dní.
+  const staleMarked = (now) => evaluateHealth({ scenario: { isActive: true }, executions: [{ status: 1, timestamp: iso(24 * 5) }], pending: [], daysBack: 3, now, mark: r.mark }).level;
+  assert.equal(staleMarked(NOW), "ok");
+  assert.equal(staleMarked(NOW + 4 * 24 * HOUR), "warn");
+
+  res = await post("unresolve", { scenarioId: 7734406 });
+  assert.equal(res.status, 200);
+  med = (await overview())[1];
+  assert.equal(med.mark, null);
+  assert.equal(med.openPending, 1);
+
+  res = await post("resolve", { scenarioId: 999 });
+  assert.equal(res.status, 400, "neznámý scénář nejde označit");
+});
+
+test("přehled funguje, i když úložiště označení není dostupné", async () => {
+  const { fetchImpl } = fakeFetch(routes);
+  const client = createMakeClient(settings, fetchImpl);
+  const markStore = { getAll: async () => { throw new Error("blobs nedostupné"); }, set: async () => {} };
+  const res = await handle(new Request("https://x.netlify.app/api/overview"), { settings, client, markStore, now: NOW });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.marksError, "blobs nedostupné");
+  assert.equal(body.scenarios.length, 2);
 });
