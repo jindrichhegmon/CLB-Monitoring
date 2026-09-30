@@ -20,6 +20,7 @@ Seznam je v `netlify/lib/scenarios.mjs` (pořadí = pořadí řádků v tabulce)
 | 7734406 | A. MEDISTAR – Načtení dat po importu z Excelu do PacientiVykony a spuštění statistik |
 | 7734951 | B. MEDISTAR – Úprava a doplnění tabulek a načtení SQLPACIENTIRUN do ArchivPacientiVykony + spuštění statistik |
 | 4825799 | MEDISTAR-STATISTIKY – kompletní tabulky do Modré hlavy (on-demand, tlačítko „Spustit scénář“) |
+| 8879527 | Zadost o přijetí do hospice + Telefon a SMS FAMICURA |
 
 Přidání dalšího scénáře: doplnit řádek `{ id: <ID>, name: "<název>" }` (ID je v Make v adrese scénáře).
 Seznam jde přepsat i bez zásahu do kódu proměnnou prostředí `MAKE_SCENARIOS`
