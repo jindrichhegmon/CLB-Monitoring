@@ -7,6 +7,8 @@
 export const SCENARIOS = [
   { id: 5082766, name: "1. DIKTOVANI AI vyšetření MSPP – JOTFORM" },
   { id: 6231864, name: "2. PM103 JOTFORM" },
+  { id: 10091287, name: "1. DIKTOVANI PECEDOMA (webhook, bez Jotformu)" },
+  { id: 10091276, name: "2. PM103 PECEDOMA (webhook, bez Jotformu)" },
   {
     id: 7734429,
     name: "B1. Načtení ADRES po importu z Excelu a úprava adres – AKTUÁLNÍ SCÉNÁŘ (diakritika atd.)",
