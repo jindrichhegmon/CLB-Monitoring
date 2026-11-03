@@ -16,6 +16,8 @@ Seznam je v `netlify/lib/scenarios.mjs` (pořadí = pořadí řádků v tabulce)
 |-----------:|--------|
 | 5082766 | 1. DIKTOVANI AI vyšetření MSPP – JOTFORM |
 | 6231864 | 2. PM103 JOTFORM |
+| 10091287 | 1. DIKTOVANI PECEDOMA (webhook, bez Jotformu) |
+| 10091276 | 2. PM103 PECEDOMA (webhook, bez Jotformu) |
 | 7734429 | B1. Načtení ADRES po importu z Excelu a úprava adres – AKTUÁLNÍ SCÉNÁŘ (diakritika atd.) |
 | 7734406 | A. MEDISTAR – Načtení dat po importu z Excelu do PacientiVykony a spuštění statistik |
 | 7734951 | B. MEDISTAR – Úprava a doplnění tabulek a načtení SQLPACIENTIRUN do ArchivPacientiVykony + spuštění statistik |
